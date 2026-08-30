@@ -52,9 +52,14 @@
 const fs = require('fs');
 const readline = require('readline');
 
-if (process.env.DATABASE_URL && process.env.ALLOW_POSTGRES !== '1') {
-  console.error('Refusing to run: DATABASE_URL is set, and this importer writes to the LOCAL SQLite DB.\n' +
-                'Unset it (env -u DATABASE_URL node scripts/fetch-xeruit.js ...) or pass ALLOW_POSTGRES=1 deliberately.');
+// The point of this guard is "never write to the LIVE board by accident", not "never use
+// Postgres" — the local corpus now lives in a local Postgres (jobs_local), so a loopback URL is
+// exactly where these importers are meant to write. Only a REMOTE host needs the override.
+const dbHost = (() => { try { return new URL(process.env.DATABASE_URL).hostname; } catch { return ''; } })();
+const isLocalDb = ['localhost', '127.0.0.1', '::1', ''].includes(dbHost);
+if (process.env.DATABASE_URL && !isLocalDb && process.env.ALLOW_POSTGRES !== '1') {
+  console.error('Refusing to run: DATABASE_URL points at a REMOTE database.\n' +
+                'Point it at a local database, or pass ALLOW_POSTGRES=1 deliberately.');
   process.exit(1);
 }
 

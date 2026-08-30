@@ -27,7 +27,16 @@
  * reads random pages and costs almost nothing. SAMPLE_PCT forces shadow mode — a sample must
  * never be used to write.
  *
+ * ONLY_CLASSIFIED=1 is the one worth reaching for on production. The crawler re-classifies on
+ * every sync (crawl-companies-local.js), and syncForCompany's upsert overwrites whenever the new
+ * value is non-empty — so rows that SHOULD gain an answer heal themselves within a sync cycle
+ * and need no sweep at all. What never heals is the reverse: when the corrected classifier
+ * returns nothing, the upsert's `WHEN EXCLUDED.visa_sponsorship != ''` guard keeps the old wrong
+ * value forever. Those rows all already carry a value, which is ~1.1% of the corpus — so this
+ * mode fixes the entire non-self-healing population while scanning 1/90th of the table.
+ *
  * Env: BATCH (2000) · LIMIT (0 = all) · SAMPLE_PCT (0 = full scan) · SKIP_STATED=1
+ *      ONLY_CLASSIFIED=1 (only rows that already hold a real value)
  */
 const { query, closeDb, isPostgres } = require('../src/db/connection');
 const { classifyVisa } = require('../src/utils/classify');
@@ -38,6 +47,11 @@ const APPLY = process.env.APPLY === '1' && !SAMPLE_PCT;
 const BATCH = parseInt(process.env.BATCH || '2000', 10);
 const LIMIT = parseInt(process.env.LIMIT || '0', 10);
 const SKIP_STATED = process.env.SKIP_STATED === '1';
+const ONLY_CLASSIFIED = process.env.ONLY_CLASSIFIED === '1';
+// IN, not NOT IN: 'yes'/'no' are the only values classifyVisa can produce, so this is the same
+// set — but an IN-list is an indexable predicate that idx_jobs_visa can serve, while NOT IN
+// forces a sequential scan of 5M rows and dies on the statement timeout.
+const SCOPE = ONLY_CLASSIFIED ? "AND j.visa_sponsorship IN ('yes', 'no')" : '';
 
 async function buildStatedMap() {
   // Employer-stated answers, keyed by normalised (company, title). Only unanimous groups count:
@@ -56,7 +70,7 @@ async function buildStatedMap() {
 }
 
 async function main() {
-  console.log(`engine: ${isPostgres ? 'postgres' : 'sqlite'} | mode: ${APPLY ? 'APPLY' : 'SHADOW'}`);
+  console.log(`engine: ${isPostgres ? 'postgres' : 'sqlite'} | mode: ${APPLY ? 'APPLY' : 'SHADOW'}${ONLY_CLASSIFIED ? ' | scope: already-classified rows only' : ''}`);
 
   const stated = await buildStatedMap();
   console.log(`employer-stated keys: ${stated.size.toLocaleString()}${SKIP_STATED ? ' (disabled)' : ''}`);
@@ -67,18 +81,39 @@ async function main() {
   if (SAMPLE_PCT && !isPostgres) { console.error('SAMPLE_PCT needs Postgres (TABLESAMPLE).'); process.exit(1); }
   if (SAMPLE_PCT) console.log(`SAMPLE_PCT=${SAMPLE_PCT} — estimating from a random page sample; writing is disabled`);
 
+  // Keyset paging (`id > last`) degrades badly here: the plan walks idx_jobs_visa and discards
+  // everything below the cursor, so each successive batch filters more rows before it can fill
+  // the LIMIT, and eventually blows the read timeout. The target set is small (~1% of the
+  // table), so collect its ids ONCE with an index-only scan and then fetch by id list — every
+  // batch then costs the same, and the expensive predicate is evaluated exactly once.
+  let idQueue = null;
+  if (ONLY_CLASSIFIED) {
+    const t0 = Date.now();
+    const { rows: ids } = await query(
+      `SELECT id FROM jobs WHERE visa_sponsorship IN ('yes','no') AND removed_at IS NULL AND ats != 'simplify'`);
+    idQueue = ids.map((r) => r.id);
+    console.log(`target rows: ${idQueue.length.toLocaleString()} (collected in ${((Date.now() - t0) / 1000).toFixed(0)}s)`);
+  }
+
   for (;;) {
-    const { rows } = SAMPLE_PCT
+    const idChunk = idQueue ? idQueue.splice(0, BATCH) : null;
+    if (idQueue && !idChunk.length) break;
+    const { rows } = idChunk
+      ? await query(
+          `SELECT j.id, j.title, j.description, j.visa_sponsorship AS stored, c.company_name
+             FROM jobs j JOIN companies c ON c.id = j.company_id
+            WHERE j.id = ANY(?)`, [idChunk])
+      : SAMPLE_PCT
       ? await query(
           `SELECT j.id, j.title, j.description, j.visa_sponsorship AS stored, c.company_name
              FROM jobs j TABLESAMPLE SYSTEM (${SAMPLE_PCT}) JOIN companies c ON c.id = j.company_id
-            WHERE j.ats != 'simplify' AND j.removed_at IS NULL
+            WHERE j.ats != 'simplify' AND j.removed_at IS NULL ${SCOPE}
             LIMIT ${BATCH}`)
       : await query(
           `SELECT j.id, j.title, j.description, j.visa_sponsorship AS stored,
                   c.company_name
              FROM jobs j JOIN companies c ON c.id = j.company_id
-            WHERE j.id > ? AND j.ats != 'simplify' AND j.removed_at IS NULL
+            WHERE j.id > ? AND j.ats != 'simplify' AND j.removed_at IS NULL ${SCOPE}
             ORDER BY j.id
             LIMIT ${BATCH}`, [lastId]);
     if (!rows.length) break;

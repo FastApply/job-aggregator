@@ -21,8 +21,13 @@
  * Shadow by default because this rewrites rows in bulk, which is the shape of change this repo
  * has been bitten by before.
  */
-if (process.env.DATABASE_URL && process.env.ALLOW_POSTGRES !== '1') {
-  console.error('Refusing to run: DATABASE_URL is set, and this works on the LOCAL SQLite DB.');
+// The point of this guard is "never write to the LIVE board by accident", not "never use
+// Postgres" — the local corpus now lives in a local Postgres (jobs_local), so a loopback URL is
+// exactly where these importers are meant to write. Only a REMOTE host needs the override.
+const dbHost = (() => { try { return new URL(process.env.DATABASE_URL).hostname; } catch { return ''; } })();
+const isLocalDb = ['localhost', '127.0.0.1', '::1', ''].includes(dbHost);
+if (process.env.DATABASE_URL && !isLocalDb && process.env.ALLOW_POSTGRES !== '1') {
+  console.error('Refusing to run: DATABASE_URL points at a REMOTE database.');
   process.exit(1);
 }
 
