@@ -60,9 +60,43 @@ async function migrate() {
       experience_level TEXT,
       is_remote        BOOLEAN DEFAULT FALSE,
       remote_worldwide BOOLEAN DEFAULT FALSE,
+      -- Same story, and for the same reason: syncForCompany's upsert names role_category in
+      -- its column list and absent_syncs in its ON CONFLICT clause on EVERY path, Postgres or
+      -- not. SQLite prepares the whole statement up front, so a missing column here is not a
+      -- latent bug that shows up on conflict — it fails the very first sync with
+      -- "table jobs has no column named role_category". Both were Postgres-only ALTERs below,
+      -- which left a fresh SQLite DB unable to ingest a single job.
+      role_category    TEXT,
+      absent_syncs     INTEGER NOT NULL DEFAULT 0,
+      -- Ordering tiebreaker, read by findWithFilters on BOTH engines
+      -- (ORDER BY j.first_seen_at DESC, j.random_rank), so it cannot be Postgres-only
+      -- either: without it /api/jobs is a 500 on SQLite. The parenthesised default parses
+      -- on both — SQLite requires the parens, Postgres tolerates them.
+      random_rank      DOUBLE PRECISION DEFAULT (random()),
       UNIQUE(external_id, company_id)
     )
   `);
+
+  // Upgrade path for local SQLite databases created before role_category, absent_syncs and
+  // random_rank moved into the CREATE TABLE above. SQLite has no ADD COLUMN IF NOT EXISTS, so
+  // each ALTER is attempted and ONLY "duplicate column name" is swallowed — anything else is a
+  // real failure and must not be silently lost. random_rank carries no default here because
+  // SQLite rejects a non-constant one on ADD COLUMN ("Cannot add a column with non-constant
+  // default"); it is backfilled instead, and new rows get their default from the CREATE above.
+  if (!isPostgres) {
+    for (const [col, decl] of [
+      ['role_category', 'TEXT'],
+      ['absent_syncs', 'INTEGER NOT NULL DEFAULT 0'],
+      ['random_rank', 'DOUBLE PRECISION'],
+    ]) {
+      try {
+        await exec(`ALTER TABLE jobs ADD COLUMN ${col} ${decl}`);
+        if (col === 'random_rank') await exec('UPDATE jobs SET random_rank = random() WHERE random_rank IS NULL');
+      } catch (err) {
+        if (!/duplicate column name/i.test(err.message)) throw err;
+      }
+    }
+  }
 
   await exec('CREATE INDEX IF NOT EXISTS idx_jobs_company_id ON jobs(company_id)');
   await exec('CREATE INDEX IF NOT EXISTS idx_jobs_external_id ON jobs(external_id)');

@@ -156,6 +156,32 @@ DATABASE_URL="postgres://..." NODE_ENV=production node scripts/<script>.js
 
 `NODE_ENV=production` matters — it enables TLS on the Postgres connection, which Heroku requires.
 
+### Running the board against the local SQLite DB
+
+The API does not need Postgres, Redis or Meilisearch. With `DATABASE_URL` unset it opens
+`data/jobs.db`; with `API_SECRET` unset it skips auth; with `REDIS_URL` unset it skips the
+(retired) queue. Meilisearch is optional — `jobsSearch.search()` returns null when the index is
+unset and the query falls back to SQL, so `servedBy` in the response reads `postgres` even here.
+It means "answered from the database, not the search index".
+
+```bash
+# populate data/jobs.db first — e.g. scripts/fetch-xeruit.js
+env -u DATABASE_URL -u API_SECRET -u REDIS_URL PORT=3100 node src/web.js
+curl 'http://localhost:3100/api/jobs?q=engineer&posted=7d&limit=5'
+```
+
+Port 3100 rather than the 3000 default, because the frontend dev server takes 3000. CORS already
+allows `http://localhost:3000`, so a local frontend can point straight at it.
+
+**Use Node 22** (`/opt/homebrew/opt/node@22/bin/node`). `better-sqlite3` 12.6.2 does not compile
+against Node 26 — `npm rebuild` fails in node-gyp — so the SQLite path only works on a Node the
+prebuilt binding supports. Postgres is unaffected, which is why this went unnoticed.
+
+`/api/jobs` takes `q`, `location`, `ats` (comma list), `employment_type`, `experience_level`,
+`work_mode`, `remote`, `remote_worldwide`, `visa`, `company_id`, `posted` (`Nh`/`Nd`/`Nw`/`Nm`),
+`include=description`, and `limit`/`page`/`offset`. Counts stop at `SEARCH_COUNT_CAP` (10,000)
+and say so via `meta.totalIsCapped`.
+
 ---
 
 ## How the pieces fit
