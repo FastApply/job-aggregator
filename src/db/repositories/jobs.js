@@ -3,6 +3,7 @@ const logger = require('../../logger');
 const { aliasGroup, isShortAlias } = require('../../utils/location-aliases');
 const { normalizeEmploymentType, normalizeWorkplaceType } = require('../../utils/extract');
 const { classifyRoleCategory } = require('../../utils/classify');
+const { annualiseSalary } = require('../../utils/salary');
 const { parsePostedWindow } = require('../../utils/posted-window');
 
 // Upper bound on result counts — see countActive. Env-tunable.
@@ -21,6 +22,38 @@ function buildFilters(filters = {}) {
   const clauses = ['j.removed_at IS NULL'];
   const params = [];
   let needsJoin = false;
+
+  // Salary. Filters on the annualised numeric copies, never the raw TEXT columns.
+  //
+  // A salary filter EXCLUDES unpriced jobs by design: asking for "jobs paying over 100k" and
+  // being shown jobs with no stated salary is not a useful answer. `salary_min_annual IS NOT
+  // NULL` is implied by the comparison anyway (NULL comparisons are never true), but it is
+  // written out so the intent is not mistaken for an oversight.
+  //
+  // Currency is a separate, required-in-practice filter: the corpus holds 56 of them and we do
+  // no FX conversion, so comparing a number across currencies would silently mix USD with INR.
+  // Callers that omit it get the amount filter applied within whatever currency each row uses,
+  // which is why the API layer defaults it.
+  if (filters.salaryMin) {
+    const n = parseInt(filters.salaryMin, 10);
+    if (Number.isFinite(n)) {
+      clauses.push('j.salary_min_annual IS NOT NULL AND j.salary_min_annual >= ?');
+      params.push(n);
+    }
+  }
+  if (filters.salaryMax) {
+    const n = parseInt(filters.salaryMax, 10);
+    if (Number.isFinite(n)) {
+      // Bounded by the LOW end of the posted range: a job advertised 80k-250k satisfies
+      // "up to 120k" for a candidate whose ceiling is 120k.
+      clauses.push('j.salary_min_annual IS NOT NULL AND j.salary_min_annual <= ?');
+      params.push(n);
+    }
+  }
+  if (filters.salaryCurrency) {
+    clauses.push('j.salary_currency = ?');
+    params.push(String(filters.salaryCurrency).toUpperCase());
+  }
 
   // Role / Keywords — use full-text search on Postgres, ILIKE fallback on SQLite
   if (filters.q) {
@@ -274,7 +307,8 @@ const jobsRepo = {
     const descCol = filters.includeDescription ? ', j.description' : '';
     const cols = `SELECT j.id, j.external_id, j.company_id, j.ats, j.title, j.department,
         j.location, j.workplace_type, j.employment_type, j.salary_min, j.salary_max,
-        j.salary_currency, j.salary_interval, j.url, j.posted_at, j.first_seen_at,
+        j.salary_currency, j.salary_interval, j.salary_min_annual, j.salary_max_annual,
+        j.url, j.posted_at, j.first_seen_at,
         j.is_remote, j.remote_worldwide, j.visa_sponsorship, j.experience_level,
         c.domain, c.ats_slug, c.company_name, c.logo_url${descCol}`;
 
@@ -426,7 +460,7 @@ const jobsRepo = {
       const CHUNK = 200;
       for (let i = 0; i < deduped.length; i += CHUNK) {
         const slice = deduped.slice(i, i + CHUNK);
-        const rowSql = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`;
+        const rowSql = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`;
         const params = [];
         for (const job of slice) {
           params.push(
@@ -446,7 +480,11 @@ const jobsRepo = {
             job.remote_worldwide || false,
             // Derived once here rather than by a ~25-branch CASE over every live job at query
             // time — that made /api/roles a 40s scan the router killed at 30s.
-            classifyRoleCategory(job.title)
+            classifyRoleCategory(job.title),
+            // Derived here, not at query time: salary_min/max are TEXT and their interval
+            // varies per posting, so this is the only comparable number a filter can use.
+            annualiseSalary(job.salary_min, job.salary_interval),
+            annualiseSalary(job.salary_max, job.salary_interval)
           );
         }
 
@@ -457,7 +495,7 @@ const jobsRepo = {
             salary_min, salary_max, salary_currency, salary_interval,
             description, url, posted_at, raw_data,
             visa_sponsorship, experience_level, is_remote, remote_worldwide,
-            role_category,
+            role_category, salary_min_annual, salary_max_annual,
             first_seen_at, last_seen_at
           )
           VALUES ${slice.map(() => rowSql).join(', ')}
@@ -482,6 +520,11 @@ const jobsRepo = {
             salary_max = COALESCE(EXCLUDED.salary_max, jobs.salary_max),
             salary_currency = COALESCE(EXCLUDED.salary_currency, jobs.salary_currency),
             salary_interval = COALESCE(EXCLUDED.salary_interval, jobs.salary_interval),
+            -- Must follow the same COALESCE as the columns they are derived from, or a sync
+            -- that carries no salary would blank the annualised copy while the raw values
+            -- survive, and the two would disagree.
+            salary_min_annual = COALESCE(EXCLUDED.salary_min_annual, jobs.salary_min_annual),
+            salary_max_annual = COALESCE(EXCLUDED.salary_max_annual, jobs.salary_max_annual),
             description = COALESCE(EXCLUDED.description, jobs.description),
             url = EXCLUDED.url,
             posted_at = EXCLUDED.posted_at,

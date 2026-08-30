@@ -35,6 +35,11 @@ function formatJob(row, includeDescription = false) {
       max: row.salary_max == null ? null : String(row.salary_max),
       currency: row.salary_currency,
       interval: row.salary_interval,
+      // The figure salary_min/salary_max filters actually compare against. Without it a result
+      // is baffling: filtering ">= 100000" returns a row displaying "73.85", because that is
+      // 73.85/hour — $153,608/yr. Null means the row is not salary-filterable at all.
+      min_annual: row.salary_min_annual == null ? null : Number(row.salary_min_annual),
+      max_annual: row.salary_max_annual == null ? null : Number(row.salary_max_annual),
     },
     company: {
       id: row.company_id,
@@ -106,6 +111,14 @@ router.get('/api/jobs', async (req, res) => {
   if (req.query.remote_worldwide) filters.remoteWorldwide = req.query.remote_worldwide;
   if (req.query.visa) filters.visa = req.query.visa;
   if (req.query.experience_level) filters.experienceLevel = req.query.experience_level;
+  // Salary. `salary_currency` defaults to USD (89% of priced rows) because the amount alone is
+  // meaningless across the 56 currencies in the corpus and we do no FX conversion — without a
+  // default, "over 100000" would quietly match ₹100,000 alongside $100,000.
+  if (req.query.salary_min) filters.salaryMin = req.query.salary_min;
+  if (req.query.salary_max) filters.salaryMax = req.query.salary_max;
+  if (req.query.salary_min || req.query.salary_max) {
+    filters.salaryCurrency = req.query.salary_currency || 'USD';
+  }
   if (req.query.company_id) filters.companyId = parseInt(req.query.company_id, 10);
   if (req.query.ats) filters.ats = req.query.ats.split(',');
 

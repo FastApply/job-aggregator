@@ -265,6 +265,27 @@ node scripts/meili-backfill.js          # copy jobs straight in; read-only on Po
 **`test-sync-batch.js`** — verifies the batched `syncForCompany` upsert. Worth running after any
 change to sync.
 
+**`test-salary.js`** — salary annualisation. Salary is filterable via `salary_min_annual` /
+`salary_max_annual`, numeric copies written by `syncForCompany` through
+`src/utils/salary.js`. Two reasons the raw columns cannot be filtered: they are TEXT (so
+`> 200000` compares strings and `"90000"` sorts above `"200000"`), and the interval varies as
+widely as the amount — hourly and yearly rows are near-equally common, so $50/hr and $50,000/yr
+are the same number to a naive comparison.
+
+The per-interval plausibility ceilings in that file are the part worth not "simplifying" away.
+Stored weekly amounts fall into two clumps: ~1,000 rows under $9k (real weekly rates) and ~900
+between $60k and $900k, which are annual salaries carrying a weekly label — one real row reads
+"Alliances Manager, 70,000-90,000 weekly", i.e. $3.64M/yr. A single absolute ceiling passed all
+of them, and they then topped every high-salary search. Rows that fail a ceiling get NULL, so
+they are excluded from salary filters rather than filtered wrongly.
+```bash
+node scripts/test-salary.js
+DATABASE_URL=... NODE_ENV=local node scripts/backfill-salary-annual.js   # SHADOW; APPLY=1 writes
+```
+A salary filter **excludes unpriced jobs** — asking for "over 100k" and being shown jobs with no
+stated salary is not a useful answer. `salary_currency` defaults to USD (89% of priced rows)
+because no FX conversion happens and the amount alone would otherwise mix USD with INR.
+
 **`test-classify-visa.js`** — `classifyVisa()`, written around a real miss. `VISA_NO_PATTERNS`
 required `no` to sit adjacent to `sponsorship`, so "No **new** H1B sponsorship available" was not
 read as a refusal; control fell through to `VISA_YES_PATTERNS`, which matched `/h1b\s*transfer/`

@@ -159,6 +159,11 @@ function buildQuery(filters) {
  */
 async function search(filters = {}) {
   if (!meili.enabled) return null;
+  // The index carries no annualised salary field yet, and adding one needs a full reindex that
+  // only runs from Render. Rather than answer a salary query wrongly, hand it to Postgres — the
+  // partial index on salary_min_annual makes that path cheap, unlike the fallbacks this warns
+  // about elsewhere. Remove this once the documents carry salary_min_annual.
+  if (filters.salaryMin || filters.salaryMax) return null;
 
 
   const built = buildFilter(filters);
