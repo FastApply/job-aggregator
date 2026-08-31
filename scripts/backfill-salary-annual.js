@@ -32,18 +32,25 @@ async function main() {
        FROM jobs WHERE salary_min IS NOT NULL`);
   console.log(`priced rows: ${Number(pre.total).toLocaleString()} | already annualised: ${Number(pre.done).toLocaleString()}`);
 
-  let scanned = 0, filled = 0, refused = 0, lastId = 0;
+  let scanned = 0, filled = 0, refused = 0;
   const pending = [];
   const byInterval = new Map();
 
-  for (;;) {
-    const { rows } = await query(
-      `SELECT id, salary_min, salary_max, salary_interval
-         FROM jobs
-        WHERE id > ? AND salary_min IS NOT NULL AND salary_min_annual IS NULL
-        ORDER BY id LIMIT ${BATCH}`, [lastId]);
-    if (!rows.length) break;
-    lastId = rows[rows.length - 1].id;
+  // One scan, not one per batch. Keyset paging on `id > last` cannot help here: the predicate
+  // that selects the work (salary_min_annual IS NULL) has no index, so every batch rescanned
+  // from the cursor and the query timed out long before the table was covered. The target set
+  // is narrow — four small columns, no descriptions — so pulling it in one pass is cheap and
+  // turns every subsequent write into a plain primary-key lookup.
+  console.log('collecting target rows (one scan)...');
+  const t0 = Date.now();
+  const { rows: targets } = await query(
+    `SELECT id, salary_min, salary_max, salary_interval
+       FROM jobs
+      WHERE salary_min IS NOT NULL AND salary_min_annual IS NULL`);
+  console.log(`  ${targets.length.toLocaleString()} rows to process (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
+
+  while (targets.length) {
+    const rows = targets.splice(0, BATCH);
 
     for (const r of rows) {
       scanned++;

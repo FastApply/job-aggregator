@@ -70,6 +70,19 @@ function buildFilter(filters = {}) {
   if (filters.remote === 'true') parts.push('is_remote = true');
   if (filters.remoteWorldwide === 'true') parts.push('remote_worldwide = true');
   if (filters.visa) parts.push(`visa_sponsorship = ${q(filters.visa)}`);
+  // Salary. Mirrors the SQL path exactly, including that a salary filter EXCLUDES unpriced jobs:
+  // `salary_min_annual EXISTS` is Meilisearch's way of saying IS NOT NULL, and without it the
+  // index would happily return documents whose field is null.
+  if (filters.salaryMin || filters.salaryMax) {
+    parts.push('salary_min_annual EXISTS');
+    const lo = parseInt(filters.salaryMin, 10);
+    if (Number.isFinite(lo)) parts.push(`salary_min_annual >= ${lo}`);
+    // Bounded by the LOW end of the posted range, same as the SQL path: a job advertised
+    // 80k-250k satisfies "up to 120k" for a candidate whose ceiling is 120k.
+    const hi = parseInt(filters.salaryMax, 10);
+    if (Number.isFinite(hi)) parts.push(`salary_min_annual <= ${hi}`);
+    if (filters.salaryCurrency) parts.push(`salary_currency = ${q(String(filters.salaryCurrency).toUpperCase())}`);
+  }
 
   // Location: the SQL path does substring matching plus country-alias expansion.
   //
@@ -159,11 +172,7 @@ function buildQuery(filters) {
  */
 async function search(filters = {}) {
   if (!meili.enabled) return null;
-  // The index carries no annualised salary field yet, and adding one needs a full reindex that
-  // only runs from Render. Rather than answer a salary query wrongly, hand it to Postgres — the
-  // partial index on salary_min_annual makes that path cheap, unlike the fallbacks this warns
-  // about elsewhere. Remove this once the documents carry salary_min_annual.
-  if (filters.salaryMin || filters.salaryMax) return null;
+
 
 
   const built = buildFilter(filters);
@@ -262,6 +271,8 @@ async function search(filters = {}) {
       posted_at: h.posted_at,
       salary_min: h.salary_min,
       salary_max: h.salary_max,
+      salary_min_annual: h.salary_min_annual ?? null,
+      salary_max_annual: h.salary_max_annual ?? null,
       salary_currency: h.salary_currency,
       salary_interval: h.salary_interval,
       company_id: h.company_id,

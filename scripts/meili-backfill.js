@@ -76,6 +76,7 @@ async function apiBusy() {
               j.employment_type, j.experience_level, j.visa_sponsorship, j.role_category,
               j.is_remote, j.remote_worldwide, j.ats, j.url,
               j.salary_min, j.salary_max, j.salary_currency, j.salary_interval,
+              j.salary_min_annual, j.salary_max_annual,
               j.posted_at, j.first_seen_at, j.company_id,
               c.company_name, c.domain, c.ats_slug, c.logo_url
          FROM jobs j
