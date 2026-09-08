@@ -110,6 +110,48 @@ Two fields matter most:
 | `fallbacks_1h` | searches that gave up on Meilisearch and hit Postgres. **This is the alarm.** It is the mechanism that took the board down on 2026-08-20. Sustained non-zero needs attention; latency alone does not reach users. |
 | `absent3` | jobs about to be auto-retired. Should drift *down*. If it climbs steadily, the absence signal has drifted — switch `SYNC_ABSENCE_REMOVAL` off in the launcher. |
 
+### `health-alert.js` — the part that actually tells you
+
+`log-health.sh` has recorded the numbers above hourly for weeks and **nothing read them
+back**. That is the gap this repo's handover opens with, and it has a cost: on 2026-09-05 a
+paying user's Apply-for-Me automation had no jobs for their criteria, and the first anyone knew
+was a support chat. `src/utils/notify.js` had a working `sendAlert()` the whole time with zero
+callers.
+
+```bash
+DATABASE_URL=... DRY=1 node scripts/health-alert.js   # print what it would send
+crontab -e
+# 5 * * * * ... node scripts/health-alert.js          # just after log-health.sh at :00
+```
+
+Alerts on: ingestion stalled (<500 retired/hour against a healthy 3,000–12,000), the corpus
+shrinking below 4M, the Meili outbox above 50k, and unmet searches going uncrawled for days.
+Sends one alert per condition, then stays quiet for `ALERT_REPEAT_HOURS` (6) so a slow fix does
+not train people to ignore the channel, and says so when a condition clears. Dedup state lives
+in an `alert_state` table, **not** a file: the Render worker restarts 13–18 times a day, so
+on-disk state there is empty on nearly every run and every restart would re-alert. Needs
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; without them it logs and sends nothing. Always
+exits 0.
+
+It also runs hourly inside `render-worker.js`, so alerting does not depend on the laptop being
+awake — which matters, because "the laptop slept" is the thing most worth alerting on.
+
+### `demand-queue-preview.js` — what demand-crawl will pick next
+
+Read-only. Prints the next batch under the current two-lane selection beside what the old
+popularity-only ordering would have taken, and counts how many rows would otherwise never have
+been reached.
+
+```bash
+DATABASE_URL=... node scripts/demand-queue-preview.js
+```
+
+`demand-crawl` used to select with one `ORDER BY search_count DESC LIMIT 25`, so a search
+nobody else runs never reached the queue however long it had been unmet — the shape of a paying
+user with narrow criteria. `DEMAND_STARVED_SHARE` (0.4) of each batch is now reserved for the
+most starved demand regardless of popularity; set it to `0` to restore the old behaviour
+without a deploy.
+
 ### `job-roles.js` — shared vocabulary (library, not a script)
 1,683 job titles across 27 industries. Imported by the discovery tools. Do not run it.
 
