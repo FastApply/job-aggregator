@@ -30,6 +30,7 @@ const { backfillForAts, ATS_CONFIG } = require('../src/tasks/backfill-descriptio
 const { backfillClassifications } = require('../src/tasks/backfill-classifications');
 const { pruneDeadJobs } = require('../src/tasks/dead-job-check');
 const { cycle: runDemandCycle, ensureColumns: ensureDemandColumns } = require('../src/tasks/demand-crawl');
+const { runHealthAlert } = require('./health-alert');
 const { query, closeDb } = require('../src/db/connection');
 
 const CRAWL_ATS = process.env.CRAWL_ATS || 'workday,icims,oracle,successfactors';
@@ -186,6 +187,20 @@ async function runDemandCrawl() {
   setTimeout(runDemandCrawl, 20 * 60 * 1000);
 }
 
+// Health alerting lives here rather than only in laptop cron, because the
+// single most alert-worthy condition is the laptop being asleep — a monitor
+// that sleeps with it cannot report it. A handful of COUNT queries an hour.
+let healthRunning = false;
+async function runHealthCheck() {
+  if (!healthRunning) {
+    healthRunning = true;
+    try { await runHealthAlert(); }
+    catch (e) { logger.error({ err: e.message }, 'health-alert error'); }
+    finally { healthRunning = false; }
+  }
+  setTimeout(runHealthCheck, 60 * 60 * 1000);
+}
+
 function shutdown(sig) {
   shuttingDown = true;
   logger.info({ sig }, 'render-worker shutting down');
@@ -207,3 +222,5 @@ setTimeout(runDeadPrune, 8 * 60 * 1000);
 setTimeout(runMeiliSync, 90 * 1000);
 // demand-crawl: ensure its columns exist, then start the loop a bit after boot.
 ensureDemandColumns().catch((e) => logger.warn({ err: e.message }, 'demand ensureColumns')).finally(() => setTimeout(runDemandCrawl, 6 * 60 * 1000));
+// Late enough that a boot storm after an OOM restart does not run it repeatedly.
+setTimeout(runHealthCheck, 12 * 60 * 1000);

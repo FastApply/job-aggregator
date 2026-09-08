@@ -20,7 +20,7 @@
  *       DATABASE_URL=... DRY=1 node src/tasks/demand-crawl.js    # fetch+map, write nothing
  * Env:  DEMAND_MAX_RESULTS(10) DEMAND_BATCH(15) DEMAND_RECRAWL_HOURS(6)
  *       DEMAND_MAX_TITLES(3) DEMAND_MAX_LOCATIONS(2) DEMAND_PAGES(1) DEMAND_PAGE_SIZE(100)
- *       DEMAND_DELAY_MS(1200) RECHECK_S(600)
+ *       DEMAND_DELAY_MS(1200) RECHECK_S(600) DEMAND_STARVED_SHARE(0.4)
  *       WONSULTING_COOKIE  GOOGLE_JOBS(0) SCRAPINGDOG_KEY GOOGLE_JOBS_MAX_REQ(40)
  */
 // Load .env at repo root so the always-on fleet picks up WONSULTING_COOKIE / SCRAPINGDOG_KEY /
@@ -53,6 +53,9 @@ const DELAY_MS = parseInt(process.env.DEMAND_DELAY_MS || '1200', 10);
 const LOOP = process.env.LOOP === '1';
 const DRY = process.env.DRY === '1';
 const RECHECK_S = parseInt(process.env.RECHECK_S || '600', 10);
+// Fraction of each batch reserved for STARVED demand — see selectDemand below.
+// 0 restores the old popularity-only behaviour without a redeploy.
+const STARVED_SHARE = Math.min(1, Math.max(0, parseFloat(process.env.DEMAND_STARVED_SHARE || '0.4')));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- HTTP helpers ----------
@@ -397,25 +400,79 @@ async function ensureColumns() {
   }
 }
 
+/**
+ * Choose this cycle's demand in TWO lanes.
+ *
+ * The single `ORDER BY search_count DESC` this replaced meant popularity alone
+ * decided what got crawled, and the long tail below the LIMIT was never
+ * reached at all. That is backwards for the case that matters most: a user on
+ * a paid plan with narrow criteria ("Non-Executive Director", UK, executive)
+ * generates a demand row searched once or twice a day, while a generic
+ * "software engineer" row has hundreds. The niche row sat below the cut-off
+ * permanently, so the only way its jobs ever arrived was someone loading them
+ * by hand — which is exactly what happened on 2026-09-05.
+ *
+ * Lane 1, popular: unchanged, most-searched first.
+ * Lane 2, starved: never crawled first, then longest-neglected, then emptiest.
+ *   search_count is deliberately NOT in this ordering — that is the whole
+ *   point. Every due demand reaches the front of this lane eventually, so
+ *   coverage no longer depends on being popular.
+ *
+ * Exported so the selection can be inspected against production without
+ * running a crawl: scripts/demand-queue-preview.js.
+ */
+async function selectDemand({ batch = BATCH, threshold = THRESHOLD, starvedShare = STARVED_SHARE } = {}) {
+  const DUE = `COALESCE(last_result_count, 0) <= ? AND query_text IS NOT NULL AND query_text <> ''
+        AND (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '${RECRAWL_HOURS} hours')`;
+  const COLS = 'demand_key, query_text, location, search_count, last_result_count, last_crawled_at';
+
+  const starvedWanted = Math.min(batch, Math.round(batch * starvedShare));
+  const popularWanted = batch - starvedWanted;
+
+  const popular = popularWanted > 0
+    ? (await query(
+      `SELECT ${COLS} FROM search_demand WHERE ${DUE}
+        ORDER BY search_count DESC, last_result_count ASC LIMIT ?`,
+      [threshold, popularWanted])).rows
+    : [];
+
+  // NULLS FIRST is explicit: Postgres defaults to NULLS LAST on ASC, which
+  // would put never-crawled demand — the most starved there is — at the back.
+  const starved = starvedWanted > 0
+    ? (await query(
+      `SELECT ${COLS} FROM search_demand WHERE ${DUE}
+        ORDER BY last_crawled_at ASC NULLS FIRST, last_result_count ASC, last_seen_at DESC
+        LIMIT ?`,
+      [threshold, starvedWanted + popular.length])).rows
+    : [];
+
+  // A row can qualify for both lanes; take it once, and let the starved lane
+  // top up from its own ordering so the reserved slots are not silently lost.
+  const seen = new Set(popular.map((r) => r.demand_key));
+  const picked = [...popular];
+  for (const row of starved) {
+    if (picked.length >= batch) break;
+    if (seen.has(row.demand_key)) continue;
+    seen.add(row.demand_key);
+    picked.push({ ...row, lane: 'starved' });
+  }
+  return picked;
+}
+
 async function cycle() {
   dorkReqUsed = 0; dorkNewCompanies = 0; // per-cycle reset (Serper cap + discovery counter)
   const active = SOURCES.filter((s) => s.enabled()).map((s) => s.name);
   logger.info({ sources: active, dry: DRY }, 'demand-crawl: active sources');
-  const { rows } = await query(
-    `SELECT demand_key, query_text, location, search_count, last_result_count
-       FROM search_demand
-      WHERE COALESCE(last_result_count, 0) <= ? AND query_text IS NOT NULL AND query_text <> ''
-        AND (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '${RECRAWL_HOURS} hours')
-      ORDER BY search_count DESC, last_result_count ASC LIMIT ?`,
-    [THRESHOLD, BATCH]);
+  const rows = await selectDemand();
   if (!rows.length) { logger.info('demand-crawl: no unmet demand due'); return { demands: 0, added: 0 }; }
   let totalAdded = 0, totalFetched = 0;
   for (const row of rows) {
     const { added, fetched, perSource, resultCount } = await crawlDemand(row);
     totalAdded += added; totalFetched += fetched;
-    logger.info({ q: (row.query_text || '').slice(0, 48), loc: row.location, searches: row.search_count, was_results: row.last_result_count, now_results: resultCount, fetched, added, perSource, dry: DRY }, 'demand crawled');
+    logger.info({ q: (row.query_text || '').slice(0, 48), loc: row.location, lane: row.lane || 'popular', searches: row.search_count, was_results: row.last_result_count, now_results: resultCount, fetched, added, perSource, dry: DRY }, 'demand crawled');
   }
-  logger.info({ demands: rows.length, fetched: totalFetched, added: totalAdded, dorkReqUsed, dorkNewCompanies, dorkDisabled, dry: DRY }, 'demand-crawl cycle complete');
+  const starvedCount = rows.filter((r) => r.lane === 'starved').length;
+  logger.info({ demands: rows.length, starved: starvedCount, popular: rows.length - starvedCount, fetched: totalFetched, added: totalAdded, dorkReqUsed, dorkNewCompanies, dorkDisabled, dry: DRY }, 'demand-crawl cycle complete');
   return { demands: rows.length, added: totalAdded };
 }
 
@@ -434,4 +491,4 @@ if (require.main === module) {
   })().catch((e) => { logger.error({ err: e.message }, 'demand-crawl fatal'); process.exit(1); });
 }
 
-module.exports = { cycle, crawlDemand, upsertNormalized, deriveCompany, ensureColumns };
+module.exports = { cycle, crawlDemand, upsertNormalized, deriveCompany, ensureColumns, selectDemand };
