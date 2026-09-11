@@ -130,7 +130,7 @@ router.get('/api/jobs', async (req, res) => {
   // jobsSearch.search() returns null when the index is unset, unreachable, or the filter set
   // cannot be expressed faithfully — so an index problem degrades to a slower correct answer
   // rather than a wrong one. SEARCH_ENGINE=postgres forces the old path outright.
-  let jobs, total, totalIsCappedFromIndex = null, servedBy = 'postgres';
+  let jobs, total, totalIsCappedFromIndex = null, servedBy = 'postgres', widened = false;
   const useIndex = process.env.SEARCH_ENGINE !== 'postgres';
   const hit = useIndex ? await jobsSearch.search(filters) : null;
   if (hit) {
@@ -138,6 +138,7 @@ router.get('/api/jobs', async (req, res) => {
     total = hit.total;
     totalIsCappedFromIndex = hit.totalIsCapped;
     servedBy = 'meili';
+    widened = hit.widened === true;
   } else {
     [jobs, total] = await Promise.all([
       jobsRepo.findActive(filters),
@@ -170,6 +171,9 @@ router.get('/api/jobs', async (req, res) => {
       nextOffset: hasNext ? offset + limit : null,
       prevOffset: hasPrev ? Math.max(0, offset - limit) : null,
       servedBy,
+      // True when no job contained every query word and the page holds jobs matching only some
+      // of them. The Postgres path never widens, so it is always false there.
+      widened,
     },
     data: jobs.map(j => formatJob(j, includeDesc)),
   });
