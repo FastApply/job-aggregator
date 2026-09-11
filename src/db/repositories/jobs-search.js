@@ -206,6 +206,12 @@ async function search(filters = {}) {
     // Manager", and with title/company_name/department/location all searchable it could satisfy
     // "senior" from the title and "technical" from the department. 'all' requires every term.
     let res = await meili.search({ ...base, q, matchingStrategy: strict ? 'all' : 'last' });
+    // Reported to the caller (meta.widened). A client that asked for one role and is handed
+    // jobs matching only some of its words needs to know: FastApply's starved-platform rescue
+    // re-queries platforms the first page missed, and for a platform that truly has no
+    // "Technical Writer" the relaxed answer is a page of "Technical Recruiter" it then pays
+    // to reject. The log line below already said so; the response did not.
+    let widened = false;
 
     // Requiring every term can legitimately return nothing on a long or unusual query, and an
     // empty board is worse than a loose one. Fall back to the permissive strategy only then, so
@@ -226,6 +232,7 @@ async function search(filters = {}) {
           filters: summariseFilters(filters),
         }, 'Meili: no exact-match results, widened the query');
         res = loose;
+        widened = true;
       }
     }
     if (!res) return null;
@@ -295,6 +302,7 @@ async function search(filters = {}) {
       total,
       totalIsCapped: total >= COUNT_CAP,
       facets: res.facetDistribution || null,
+      widened,
     };
   } catch (err) {
     // Never let an index problem break the board — but say so. Falling back is not free: the

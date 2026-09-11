@@ -175,7 +175,9 @@ Removal is always **soft** (`removed_at` timestamp), never `DELETE`. The board a
 index both read `WHERE removed_at IS NULL`.
 
 **Search.** `/api/jobs` queries Meilisearch and falls back to Postgres if the index is
-unavailable. A Postgres fallback is much slower and is the failure mode that has taken the board
+unavailable. A single-role `q` must match every word; when nothing does, the search relaxes to
+any word and says so via `meta.widened` (always `false` on the Postgres path), so a client that
+would rather have nothing than "Technical Recruiter" for "Technical Writer" can tell. A Postgres fallback is much slower and is the failure mode that has taken the board
 down before — watch `fallbacks_1h` in the health log.
 
 **The search index** is kept current by a Postgres outbox: a trigger sets `index_dirty_at` on any
