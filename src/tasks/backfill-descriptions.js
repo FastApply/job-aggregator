@@ -28,6 +28,10 @@ const ATS_CONFIG = {
   workday:         { batchSize: 75, concurrency: 4 },
   comeet:          { batchSize: 50, concurrency: 4 },
   paylocity:       { batchSize: 60, concurrency: 3 },
+  // Simplify pages are ~44KB gzipped and this platform has 1.7M rows to fill, so it is the one
+  // that runs longest. Concurrency stays modest deliberately: the work is a courtesy scrape of
+  // someone else's site, and measured throughput was already ~40 pages/min at 4.
+  simplify:        { batchSize: 100, concurrency: 6 },
 };
 
 // Cache workday configs per slug with TTL (1 hour)
@@ -873,6 +877,65 @@ function extractDescriptionFromHtml(html) {
 }
 
 
+/**
+ * Simplify.jobs — the description lives in the page's own __NEXT_DATA__ payload.
+ *
+ * These rows came from Simplify's Typesense search index, which carries no description at all
+ * (search indexes deliberately omit them — the same reasoning src/utils/meili.js applies to our
+ * own). So every simplify row lands description-less and can only be filled from the posting page.
+ *
+ * The page is server-rendered, so one GET is enough; there is no JSON data route
+ * (/_next/data/{buildId}/p/{id}.json returns 404 — the page is not statically generated).
+ * Requested with gzip: 160KB plain versus 44KB compressed, and this runs over a million rows.
+ *
+ * A 404 means the posting is gone from Simplify, which is terminal — return SKIP so the row is
+ * marked 'N/A' rather than retried forever.
+ */
+async function fetchSimplifyDescription(job, rawData) {
+  const id = (rawData && (rawData.posting_id || rawData.simplify_id))
+    || String(job.url || '').match(/\/p\/([0-9a-f-]{36})/i)?.[1];
+  if (!id) return 'SKIP';
+
+  // Retry transient network failures rather than counting them as a dead posting.
+  //
+  // This machine resolves through one nameserver and runs ~39 crawlers alongside this backfill,
+  // so undici's generic "fetch failed" (DNS/socket, not HTTP) appears in bursts. Treating those
+  // as failures walled the drain: 2,500 consecutive rows "unfillable" while every one of them
+  // fetched fine by hand a moment later, and the runner gave up on the whole platform.
+  let res = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await fetch(`https://simplify.jobs/p/${encodeURIComponent(id)}`, {
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'accept-encoding': 'gzip, deflate, br',
+        },
+        signal: AbortSignal.timeout(20000),
+      });
+      break;
+    } catch (err) {
+      if (attempt === 2) return null;         // still NULL, so the row is retried next cycle
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1) ** 2));
+    }
+  }
+  if (!res) return null;
+  if (res.status === 404 || res.status === 410) return 'SKIP';
+  if (!res.ok) return null;                       // transient — retry next cycle
+
+  const html = await res.text();
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!m) return null;
+  let data;
+  try { data = JSON.parse(m[1]); } catch { return null; }
+
+  const desc = data?.props?.pageProps?.jobPosting?.description;
+  if (typeof desc !== 'string' || desc.trim().length < 40) {
+    // Page rendered but carries no usable body — terminal for this posting.
+    return data?.props?.pageProps?.jobPosting ? 'SKIP' : null;
+  }
+  return desc;
+}
+
 async function fetchDescription(job) {
   const rawData = typeof job.raw_data === 'string' ? JSON.parse(job.raw_data) : job.raw_data;
 
@@ -899,6 +962,8 @@ async function fetchDescription(job) {
       description = await fetchLeverDescription(job); break;
     case 'ashby':
       description = await fetchAshbyDescription(job); break;
+    case 'simplify':
+      description = await fetchSimplifyDescription(job, rawData); break;
     case 'icims':
       description = await fetchIcimsDescription(job); break;
     case 'personio':
@@ -1010,6 +1075,22 @@ async function backfillForAts(ats, batchSize, concurrency) {
   const from = descCursor.get(ats) || 0;
   let jobs;
   try {
+    // Optional id-partitioning so several runners can share one platform's backlog.
+    //
+    // The cursor above lives in process memory, so two processes on the same ATS both start at 0
+    // and walk the SAME rows — every fetch done twice. That matters for paylocity, whose list
+    // crawl carries no body at all: 118k rows at ~60/round is ~16 hours single-runner.
+    //
+    // Defaults to mod=1/rem=0, which matches every row and changes nothing — the Render worker
+    // and any existing caller keep their current behaviour untouched.
+    //
+    // `id % mod` is not indexable, so a partitioned scan reads roughly `mod` times as many index
+    // entries to fill a batch. That is fine here because the keyset cursor bounds the walk and
+    // the batch is small; it is emphatically NOT a pattern to copy into a query that lacks one.
+    const pMod = Math.max(1, parseInt(process.env.DESC_PARTITION_MOD, 10) || 1);
+    const pRem = ((parseInt(process.env.DESC_PARTITION_REMAINDER, 10) || 0) % pMod + pMod) % pMod;
+    const partClause = pMod > 1 ? 'AND j.id % ? = ?' : '';
+    const partParams = pMod > 1 ? [pMod, pRem] : [];
     ({ rows: jobs } = await query(
       `SELECT j.id, j.ats, j.external_id, j.url, j.raw_data, c.ats_slug
        FROM jobs j JOIN companies c ON j.company_id = c.id
@@ -1017,9 +1098,10 @@ async function backfillForAts(ats, batchSize, concurrency) {
        AND j.description IS NULL
        AND j.ats = ?
        AND j.id > ?
+       ${partClause}
        ORDER BY j.id
        LIMIT ?`,
-      [ats, from, batchSize]
+      [ats, from, ...partParams, batchSize]
     ));
   } catch (err) {
     // Only a timeout earns a cool-off; a real error should still surface to the caller.
