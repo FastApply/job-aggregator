@@ -44,7 +44,18 @@ const ATS_CONFIG = {
   // Simplify pages are ~44KB gzipped and this platform has 1.7M rows to fill, so it is the one
   // that runs longest. Concurrency stays modest deliberately: the work is a courtesy scrape of
   // someone else's site, and measured throughput was already ~40 pages/min at 4.
-  simplify:        { batchSize: 100, concurrency: 6 },
+  //
+  // OPT-IN, and it has to be. scripts/render-worker.js drains descriptions with
+  // `for (const [ats, cfg] of Object.entries(ATS_CONFIG))` — every key in this object becomes
+  // work the Render worker picks up on a 5-minute loop. Listing simplify unconditionally would
+  // therefore have started a 1.7M-row scrape of someone else's site from Render's IPs, on the
+  // 512MB instance that already OOMs 13-18 times a day, duplicating a backfill the laptop owns.
+  // The entry is only ever wanted where it is deliberately run, so it is gated rather than
+  // listed. scripts/backfill-desc-generic.js falls back to {75, 4} when a key is absent, so the
+  // manual path keeps working either way.
+  ...(process.env.DESC_ENABLE_SIMPLIFY === '1'
+    ? { simplify: { batchSize: 100, concurrency: 6 } }
+    : {}),
 };
 
 // Platforms with a working fetcher but NO apply automation — users cannot apply to these jobs, so
