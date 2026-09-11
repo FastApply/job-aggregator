@@ -142,11 +142,17 @@ async function queryWithTimeout(sql, params = [], timeoutMs = 60000) {
  *
  * A momentary lookup failure should cost a few seconds, not a cycle's work.
  *
+ * EADDRNOTAVAIL / EHOSTUNREACH / ENETUNREACH are the same family seen from the other side: the
+ * local stack could not get a socket out at all. A long production backfill died on
+ * EADDRNOTAVAIL mid-run — the connection never reached Postgres, which is exactly the case this
+ * retry exists for, and it was missing only because the earlier failures happened to surface as
+ * ENOTFOUND.
+ *
  * SQL errors, statement timeouts and read timeouts are deliberately NOT here. Those mean the
  * query genuinely reached the database and failed, or that the database is already struggling —
  * retrying those adds load to something that is telling you it has too much.
  */
-const RETRYABLE_DB_ERRORS = /ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|Connection terminated|socket hang up/i;
+const RETRYABLE_DB_ERRORS = /ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EADDRNOTAVAIL|EHOSTUNREACH|ENETUNREACH|Connection terminated|socket hang up/i;
 const DB_RETRY_ATTEMPTS = parseInt(process.env.DB_RETRY_ATTEMPTS, 10) || 3;
 
 async function query(sql, params = []) {

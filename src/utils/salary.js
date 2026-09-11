@@ -103,4 +103,4 @@ function annualiseSalary(amount, interval) {
   return Math.round(annual);
 }
 
-module.exports = { normalizeSalaryInterval, annualiseSalary, PER_YEAR };
+module.exports = { normalizeSalaryInterval, annualiseSalary, PER_YEAR, MAX_PLAUSIBLE };
