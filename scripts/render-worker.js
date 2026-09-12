@@ -105,7 +105,22 @@ async function runStaleCleanup() {
       const { rows } = await query(
         `DELETE FROM jobs WHERE id IN (
            SELECT id FROM jobs
-            WHERE posted_at IS NOT NULL AND posted_at < NOW() - INTERVAL '90 days'
+            -- Keyed on removed_at, NOT posted_at. posted_at is when the EMPLOYER first
+            -- advertised the role, which says nothing about whether it is still open: a job
+            -- posted in April and still listed today is live, and this deleted it. Measured
+            -- 2026-09-12 against prod: the posted_at predicate matched ~150,600 rows that were
+            -- NOT removed, ~150,000 of which the crawlers had seen on a real board within the
+            -- last 7 days. It ran every 6 hours at up to 100k rows a cycle, so those jobs were
+            -- hard-deleted, re-crawled, and hard-deleted again, forever -- with no removed_at
+            -- trail, because this is the one DELETE in the system and it bypasses the
+            -- soft-removal rule everything else obeys. greenhouse/platacard lost exactly its 88
+            -- long-open roles this way, including a "Worldwide" posting still on the board.
+            --
+            -- A row is safe to purge only once it has ALREADY been retired and that retirement
+            -- has aged: removed_at is set by the absence counter and the dead-job pruner, both
+            -- of which require evidence the posting is gone. 7,948 prod rows qualify today and
+            -- none has been seen in the last 7 days. Uses idx_jobs_removed_at as a range scan.
+            WHERE removed_at IS NOT NULL AND removed_at < NOW() - INTERVAL '90 days'
             LIMIT 5000
          ) RETURNING id`
       );
