@@ -349,7 +349,15 @@ async function pinHostToIp(url) {
       done.add(c.local_id);
     } catch (e) {
       stats.errors++;
-      const ekey = String(e.message).replace(/"[^"]*"/g, '"..."').slice(0, 90);
+      // Normalise before grouping. Node puts the socket's LOCAL port in connect/read errors
+      // ("connect ENETUNREACH 34.234.101.86:5432 - Local (0.0.0.0:58855)"), so every one is a
+      // unique string and the tally degenerates to "10,248 distinct messages" — which is what
+      // the 2026-09-11 23:00 run actually printed while ~14,000 errors were all the same fault.
+      const ekey = String(e.message)
+        .replace(/"[^"]*"/g, '"..."')
+        .replace(/\b\d{1,3}(?:\.\d{1,3}){3}:\d+/g, 'ADDR')
+        .replace(/\bport \d+/gi, 'port N')
+        .slice(0, 90);
       stats.errorTypes[ekey] = (stats.errorTypes[ekey] || 0) + 1;
       if (stats.errors <= 5) console.log(`\n  error on ${c.ats}/${c.ats_slug}: ${e.message}`);
       // Circuit breaker. Once a run is failing this consistently it does not recover, and
