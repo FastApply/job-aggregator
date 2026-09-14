@@ -76,6 +76,9 @@ const CHECKPOINT = process.env.CHECKPOINT || '/tmp/promote-missing.checkpoint';
 // behind" alert and users saw a stale index for hours. Inserting faster than the index can
 // absorb does not deliver jobs sooner; it just moves the queue somewhere less visible.
 const OUTBOX_MAX = parseInt(process.env.OUTBOX_MAX || '40000', 10);
+// Connection-level only: the query never reached Postgres. Mirrors RETRYABLE_DB_ERRORS in
+// src/db/connection.js, minus the statement/read timeouts that mean the server did answer.
+const TRANSIENT_NET = /ENETUNREACH|EADDRNOTAVAIL|EHOSTUNREACH|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|EPIPE|Connection terminated|socket hang up/i;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const n = (v) => Number(v).toLocaleString();
@@ -244,7 +247,7 @@ async function pinHostToIp(url) {
     // against 55,609 employers -- 91% -- and printed FIVE of them, because the logger below
     // is capped at `errors <= 5`. A bare count cannot distinguish 'prod is timing out' from
     // 'one bad slug repeated 50,000 times', so the cap made a mass failure unreadable.
-    errorTypes: Object.create(null) };
+    errorTypes: Object.create(null), retries: 0 };
   const samples = [];
 
   let cursor = 0;
@@ -271,6 +274,20 @@ async function pinHostToIp(url) {
       }
     }
     stats.companies++;
+    // Transient loss of route to Heroku is retried, not counted as a failure.
+    //
+    // This laptop intermittently loses its default route for a few minutes at a time. Every such
+    // blip used to burn one employer per error and, because the breaker trips at >50%, killed the
+    // whole run: 21,889 ENETUNREACH on 2026-09-12 17:00, 16,177 on 09-13 17:00, and 495 that
+    // aborted the simplify promotion at employer 908 of 18,880. src/db/connection.js has treated
+    // this family as retryable since 87aaa12; the promoter never benefited because it drives its
+    // own pg.Pool rather than going through that wrapper.
+    //
+    // Only the connection-level errors are retried. A statement timeout or a SQL error means the
+    // query REACHED the database and failed, and retrying those adds load to something already
+    // struggling -- the same line connection.js draws.
+    let attempt = 0;
+    for (;;) {
     try {
       // 1. Does prod know this company?
       let prodCompanyId = prodCompanyIndex.get(`${c.ats}|${String(c.ats_slug).toLowerCase()}`) || null;
@@ -347,7 +364,14 @@ async function pinHostToIp(url) {
         }
       }
       done.add(c.local_id);
+      break;
     } catch (e) {
+      if (TRANSIENT_NET.test(e.message || '') && attempt < 3) {
+        attempt += 1;
+        stats.retries++;
+        await sleep(5000 * attempt);   // 5s, 10s, 15s — long enough to ride out a short blip
+        continue;
+      }
       stats.errors++;
       // Normalise before grouping. Node puts the socket's LOCAL port in connect/read errors
       // ("connect ENETUNREACH 34.234.101.86:5432 - Local (0.0.0.0:58855)"), so every one is a
@@ -371,6 +395,8 @@ async function pinHostToIp(url) {
           + `(${Math.round(100 * stats.errors / Math.max(1, stats.companies))}%). `
           + 'Something is broken -- not grinding through the rest.');
       }
+      break;
+    }
     }
 
     if (stats.companies % 10 === 0) {
@@ -392,6 +418,7 @@ async function pinHostToIp(url) {
   console.log(`  jobs examined           : ${n(stats.jobsExamined)}`);
   console.log(`  jobs already in prod    : ${n(stats.jobsAlreadyInProd)}  <- deduped by URL`);
   console.log(`  jobs ${APPLY ? 'INSERTED' : 'to insert'}          : ${n(APPLY ? stats.jobsInserted : stats.jobsWouldInsert)}`);
+  console.log(`  transient retries       : ${n(stats.retries)}`);
   console.log(`  errors                  : ${n(stats.errors)}`);
   {
     const types = Object.entries(stats.errorTypes).sort((x, y) => y[1] - x[1]);
