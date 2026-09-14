@@ -62,7 +62,10 @@ const NAME = new Map();
 /** normalised name or alias -> code */
 const LOOKUP = new Map();
 
-const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+// Folds diacritics — see location-norm.js for why that is load-bearing. Everything below that
+// scrubs `[^a-z0-9' ]` relies on the letters having been folded to ASCII first, not deleted.
+const { norm } = require('./location-norm');
+const { cityAliasGroup } = require('./city-aliases');
 
 for (const entry of TABLE.split('|')) {
   const [code, name] = entry.split(':').map((x) => x && x.trim());
@@ -75,46 +78,111 @@ for (const entry of TABLE.split('|')) {
 // Common variants people actually type or that ATS platforms actually emit. The UK constituent
 // countries map to gb deliberately: "London, England, GB" is a United Kingdom job, and someone
 // filtering by United Kingdom expects it.
-const ALIASES = {
-  us: ['usa', 'u.s.', 'u.s.a.', 'america', 'united states of america'],
-  gb: ['uk', 'u.k.', 'britain', 'great britain', 'england', 'scotland', 'wales', 'northern ireland'],
-  ae: ['uae', 'emirates'],
-  nl: ['holland', 'the netherlands'],
-  de: ['deutschland'],
-  kr: ['korea', 'republic of korea'],
-  kp: ['dprk'],
-  ru: ['russian federation'],
-  cz: ['czech republic'],
-  ci: ['ivory coast'],
-  mm: ['burma'],
-  cv: ['cape verde'],
-  sz: ['swaziland'],
-  mk: ['macedonia'],
-  va: ['vatican', 'holy see'],
-  tl: ['east timor'],
-  cd: ['democratic republic of the congo', 'congo-kinshasa'],
-  cg: ['republic of the congo', 'congo-brazzaville'],
-  tw: ['republic of china'],
-  vn: ['viet nam'],
-  tr: ['turkiye'],
-  sy: ['syrian arab republic'],
-  tz: ['united republic of tanzania'],
-  bo: ['plurinational state of bolivia'],
-  ve: ['bolivarian republic of venezuela'],
-  ir: ['islamic republic of iran'],
-  la: ["lao people's democratic republic"],
-  md: ['republic of moldova'],
-};
-for (const [code, list] of Object.entries(ALIASES)) {
+//
+// A list of pairs, not an object, so a country can appear more than once without a later entry
+// silently replacing an earlier one.
+//
+// Local-language names (endonyms) and the names neighbouring languages use (exonyms) are in
+// their FOLDED form, because norm() folds both the alias and the text before lookup:
+// "Österreich" and "Oesterreich" arrive as "osterreich" / "oesterreich". They matter at INDEX
+// time: a posting written "Madrid, España" carried no country code before they were here, so
+// `location=Spain` — which resolves to es — never found it, even though the query side already
+// mapped España to Spain. "Barcelona, Catalogne, Espagne" is a real SmartRecruiters location.
+//
+// Every entry names exactly one country when it appears in a location string. Multi-word
+// entries use spaces, never hyphens: the n-gram scan sees scrubbed words. Deliberately absent
+// because they are also place names elsewhere: "Island" (Ísland — inside thousands of US
+// locations), "Franca" (a Brazilian city) for France, "Dania" (Dania Beach, FL) for Denmark.
+// "Nederland" and "Holland" are in, with a veto for US towns of that name — see
+// countriesFromLocation.
+const ALIASES = [
+  ['us', ['usa', 'u.s.', 'u.s.a.', 'america', 'united states of america',
+    'etats unis', 'vereinigte staaten', 'estados unidos', 'stati uniti', 'verenigde staten',
+    'stany zjednoczone']],
+  ['gb', ['uk', 'u.k.', 'britain', 'great britain', 'england', 'scotland', 'wales',
+    'northern ireland', 'royaume uni', 'grossbritannien', 'vereinigtes konigreich',
+    'reino unido', 'regno unito', 'verenigd koninkrijk', 'wielka brytania']],
+  ['ae', ['uae', 'emirates']],
+  ['de', ['deutschland', 'allemagne', 'alemania', 'germania', 'duitsland', 'alemanha', 'niemcy']],
+  ['fr', ['frankreich', 'francia', 'frankrijk', 'francja']],
+  ['es', ['espana', 'espagne', 'spanien', 'spagna', 'spanje', 'espanha', 'hiszpania']],
+  ['it', ['italia', 'italie', 'italien', 'wlochy']],
+  ['nl', ['holland', 'the netherlands', 'nederland', 'pays bas', 'niederlande', 'paises bajos',
+    'paesi bassi', 'holanda', 'paises baixos', 'holandia']],
+  ['at', ['osterreich', 'oesterreich', 'autriche', 'oostenrijk']],
+  ['ch', ['schweiz', 'suisse', 'svizzera', 'svizra', 'suiza', 'zwitserland', 'suica',
+    'szwajcaria']],
+  ['be', ['belgique', 'belgie', 'belgien', 'belgica', 'belgio']],
+  ['lu', ['luxemburg', 'letzebuerg']],
+  ['pt', ['portogallo']],
+  ['pl', ['polska', 'pologne', 'polen', 'polonia']],
+  ['cz', ['czech republic', 'cesko', 'ceska republika', 'tschechien', 'czechy']],
+  ['hu', ['magyarorszag', 'hongrie', 'ungarn']],
+  ['gr', ['ellada', 'hellas', 'grece', 'griechenland', 'grecia']],
+  ['ie', ['eire', 'irlande', 'irland', 'irlanda', 'ierland', 'irlandia']],
+  ['se', ['sverige', 'suede', 'schweden', 'suecia', 'svezia', 'zweden', 'szwecja']],
+  ['no', ['norge', 'noreg', 'norvege', 'norwegen', 'noruega', 'norvegia', 'noorwegen',
+    'norwegia']],
+  ['dk', ['danmark', 'danemark', 'dinamarca', 'danimarca', 'denemarken']],
+  ['fi', ['suomi', 'finlande', 'finnland', 'finlandia']],
+  ['ro', ['roumanie', 'rumanien']],
+  ['hr', ['hrvatska', 'kroatien']],
+  ['sk', ['slovensko', 'slowakei']],
+  ['si', ['slovenija', 'slowenien']],
+  ['rs', ['srbija', 'serbien']],
+  ['ua', ['ukraina']],
+  ['lt', ['lietuva']],
+  ['lv', ['latvija']],
+  ['ee', ['eesti']],
+  ['ru', ['russian federation', 'russie', 'russland', 'rusia']],
+  ['tr', ['turkiye', 'turquie', 'turkei', 'turquia', 'turchia']],
+  ['br', ['brasil', 'bresil', 'brasilien', 'brasile', 'brazilie']],
+  ['mx', ['mexique', 'mexiko', 'messico']],
+  ['ca', ['kanada']],
+  ['do', ['republica dominicana']],
+  ['nz', ['aotearoa']],
+  ['ma', ['maroc']],
+  ['dz', ['algerie']],
+  ['tn', ['tunisie']],
+  ['cn', ['chine', 'cina']],
+  ['in', ['inde', 'indien']],
+  ['jp', ['nippon', 'nihon', 'japon', 'japao', 'giappone']],
+  ['kr', ['korea', 'republic of korea']],
+  ['kp', ['dprk']],
+  ['ci', ['ivory coast']],
+  ['mm', ['burma']],
+  ['cv', ['cape verde']],
+  ['sz', ['swaziland']],
+  ['mk', ['macedonia']],
+  ['va', ['vatican', 'holy see']],
+  ['tl', ['east timor']],
+  ['cd', ['democratic republic of the congo', 'congo-kinshasa']],
+  ['cg', ['republic of the congo', 'congo-brazzaville']],
+  ['tw', ['republic of china']],
+  ['vn', ['viet nam']],
+  ['sy', ['syrian arab republic']],
+  ['tz', ['united republic of tanzania']],
+  ['bo', ['plurinational state of bolivia']],
+  ['ve', ['bolivarian republic of venezuela']],
+  ['ir', ['islamic republic of iran']],
+  ['la', ["lao people's democratic republic"]],
+  ['md', ['republic of moldova']],
+];
+for (const [code, list] of ALIASES) {
   for (const a of list) LOOKUP.set(norm(a), code);
 }
+
+// Aliases that are also the names of US towns: Nederland, TX; Holland, MI. See the veto in
+// countriesFromLocation.
+const US_TOWN_ALIASES = new Set(['nederland', 'holland']);
 
 /**
  * Resolve a user-supplied location term to a country.
  * Returns { code, name } for a country, or null for a city/region/anything else.
  */
 function resolveCountry(term) {
-  const code = LOOKUP.get(norm(term));
+  const n = norm(term);
+  const code = LOOKUP.get(n) || LOOKUP.get(n.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim());
   return code ? { code, name: NAME.get(code) } : null;
 }
 
@@ -130,6 +198,7 @@ function countriesFromLocation(text) {
   if (!s) return [];
 
   const found = new Set();
+  let dutchOnlyByUsTown = false;
 
   // Word n-grams, not substrings. A plain `includes` tags "Indianapolis" as India and
   // "Nigeria" as Niger, because both country names are substrings of the city/country that
@@ -141,7 +210,9 @@ function countriesFromLocation(text) {
       const key = words.slice(i, i + n).join(' ');
       if (key.length <= 2) continue; // two-letter codes only count in the final segment, below
       const code = LOOKUP.get(key);
-      if (code) found.add(code);
+      if (!code) continue;
+      if (code === 'nl') dutchOnlyByUsTown = US_TOWN_ALIASES.has(key) && !found.has('nl');
+      found.add(code);
     }
   }
 
@@ -170,6 +241,13 @@ function countriesFromLocation(text) {
     if (!bareCityState || last === prev) found.add(last);
   }
 
+  // "Nederland, TX, US, 77627" and "Holland, MI" are US towns. When the Dutch reading rests on
+  // one of those two words alone and the string also carries US evidence — a resolved us, or a
+  // US state as a segment — the US reading wins.
+  if (dutchOnlyByUsTown && (found.has('us') || segments.some((seg) => US_STATES.has(seg)))) {
+    found.delete('nl');
+  }
+
   return [...found];
 }
 
@@ -196,8 +274,16 @@ function locationTokens(text) {
     const words = clean.split(' ');
     if (words.length <= 4) out.add(clean);
     for (const w of words) if (w.length > 1) out.add(w);
+    // A city with more than one spelling carries all of them, so "Munich" finds a posting
+    // written "München" and vice versa. Segment first, then single words, because "München
+    // Bayern" is one segment on some boards.
+    for (const candidate of [clean, ...words]) {
+      const group = cityAliasGroup(candidate);
+      if (group) for (const a of group) out.add(a);
+    }
   }
   return [...out];
 }
 
 module.exports.locationTokens = locationTokens;
+module.exports.norm = norm;
