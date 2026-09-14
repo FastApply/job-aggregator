@@ -15,6 +15,7 @@ const meili = require('../../utils/meili');
 const logger = require('../../logger');
 const { isShortAlias } = require('../../utils/location-aliases');
 const { resolveCountry } = require('../../utils/location-countries');
+const { queryTokens } = require('../../utils/city-aliases');
 const { parsePostedWindow } = require('../../utils/posted-window');
 const { regionCountries, canonicalSpelling } = require('../../utils/location-regions');
 const { normalizeEmploymentType } = require('../../utils/extract');
@@ -127,10 +128,19 @@ function buildFilter(filters = {}) {
       // Measured: exact filter ~47ms vs `location CONTAINS` at 8,589ms standalone and 12,736ms
       // combined with the ats list the board sends on every search. CONTAINS is an unindexed
       // substring scan and was the last operator forcing this path back onto Postgres.
-      const term = String(l).trim().toLowerCase();
+      //
+      // The term is folded the same way the tokens were written (München -> munchen) and
+      // expanded to the city's other spellings, so "Munich" also asks for "munchen" and
+      // "muenchen". Before the fold, an accented query could never match: the index held
+      // "nchen" and the query asked for "münchen". See location-norm.js.
+      const [term, ...aliases] = queryTokens(l);
       or.push(`location_tokens = ${q(term)}`);
+      for (const a of aliases) or.push(`location_tokens = ${q(a)}`);
       // A phrase longer than the tokeniser holds as one unit still needs the substring scan.
-      if (term.split(/\s+/).length > 4) or.push(`location CONTAINS ${q(term)}`);
+      // CONTAINS runs against the raw `location` field, which is NOT folded, so it gets the
+      // caller's spelling as typed — "são paulo" must stay "são paulo" here.
+      const raw = String(l).trim().toLowerCase();
+      if (raw.split(/\s+/).length > 4) or.push(`location CONTAINS ${q(raw)}`);
     }
     parts.push(`(${[...new Set(or)].join(' OR ')})`);
   }
