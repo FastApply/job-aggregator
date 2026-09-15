@@ -104,8 +104,12 @@ launch zoho-1          "zoho"              #  4,042 -> 2
 launch zoho-2          "zoho"
 launch smartrecruiters-1 "smartrecruiters" #  3,997 -> 2
 launch smartrecruiters-2 "smartrecruiters"
-launch workday-1       "workday"           #  3,458 -> 2
-launch workday-2       "workday"
+# workday: a large tenant is ~250 list pages plus one detail fetch per posting (cvshealth: 5,000)
+# at 3 concurrent with a 300ms pause, plus 429 backoff -- uline (428 jobs) measured 226s, so the
+# default 60s FETCH_TIMEOUT could never complete any tenant that matters. Same failure shape as
+# breezy above, one order of magnitude larger.
+launch workday-1       "workday" "$COMMON FETCH_TIMEOUT=3600000"  #  3,458 -> 2
+launch workday-2       "workday" "$COMMON FETCH_TIMEOUT=3600000"  
 launch rippling        "rippling"          #  3,073 -> 1
 launch personio        "personio"          #  2,966 -> 1  (one XML request per company)
 # breezy fetches a detail page PER JOB in batches of 5, so wall-clock scales with board size,

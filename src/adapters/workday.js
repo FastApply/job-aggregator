@@ -12,6 +12,35 @@ const PAGE_SIZE = 20;
 const DETAIL_BATCH_SIZE = 3;
 
 /**
+ * fetch() that rides out Workday's rate limiting instead of failing the tenant on it.
+ *
+ * A large tenant costs thousands of requests -- ~250 list pages plus one detail fetch per
+ * posting -- and Workday answers a burst of those with HTTP 429. Every fetch here used to treat
+ * any non-2xx as fatal, so the FIRST 429 threw, the tenant was marked failed, and all the work
+ * already done was thrown away. Measured 2026-09-15: the two local workday crawlers logged 1,149
+ * x 429 against 16,515 successful syncs, and the 11 largest tenants in the corpus (cvshealth
+ * 19,402 jobs, ccf 2,087, jll 2,000, ...) held ZERO rows while a plain curl to each returned its
+ * full count -- we were being throttled by our own volume, then blaming the tenant.
+ *
+ * 429 and 503 back off and retry, honouring Retry-After when Workday sends one and otherwise
+ * doubling from 2s. Anything else is returned to the caller untouched so a real 404 still
+ * retires a dead tenant. Detail fetches pass retries=1: one posting's body is not worth a
+ * minute of waiting, and the caller already tolerates a null.
+ */
+async function wdFetch(url, init, retries = 5) {
+  let delay = 2000;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    if ((res.status !== 429 && res.status !== 503) || attempt >= retries) return res;
+    const ra = Number(res.headers.get('retry-after'));
+    const wait = Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 60000) : delay;
+    logger.debug({ url: url.slice(0, 80), status: res.status, attempt, wait }, 'Workday backoff');
+    await new Promise((r) => setTimeout(r, wait));
+    delay = Math.min(delay * 2, 32000);
+  }
+}
+
+/**
  * Resolve the Workday pod number and career site slug(s) for a tenant.
  *
  * Known tenants come from workday-sites.js and cost no requests. Everything else falls back to
@@ -52,9 +81,9 @@ async function discoverConfig(slug) {
  */
 async function fetchJobDetail(baseUrl, externalPath) {
   try {
-    const res = await fetch(`${baseUrl}${externalPath}`, {
+    const res = await wdFetch(`${baseUrl}${externalPath}`, {
       signal: AbortSignal.timeout(10000),
-    });
+    }, 1);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -178,7 +207,7 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
   const baseUrl = `https://${clientname}.wd${wdNum}.myworkdayjobs.com/wday/cxs/${clientname}/${siteSlug}`;
 
   // Step 1: First request — get postings + facets
-  const firstRes = await fetch(`${baseUrl}/jobs`, {
+  const firstRes = await wdFetch(`${baseUrl}/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ appliedFacets: {}, limit: PAGE_SIZE, offset: 0, searchText: '' }),
@@ -199,7 +228,7 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
   if (postings.length >= PAGE_SIZE) {
     let offset = PAGE_SIZE;
     while (offset < 5000) {
-      const res = await fetch(`${baseUrl}/jobs`, {
+      const res = await wdFetch(`${baseUrl}/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appliedFacets: {}, limit: PAGE_SIZE, offset, searchText: '' }),
