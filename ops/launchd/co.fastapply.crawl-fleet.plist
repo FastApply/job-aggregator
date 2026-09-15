@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>co.fastapply.crawl-fleet</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>/Users/codev/job-aggregator/scripts/fleet-boot.sh</string></array>
+  <key>RunAtLoad</key><true/>
+  <!-- The launcher backgrounds ~80 nohup'd crawlers and exits. Without this, launchd treats the
+       job as finished when the launcher returns and kills its whole process group, taking every
+       crawler with it: measured 2026-09-15, "56 running" at exit, 0 sixty seconds later. -->
+  <key>AbandonProcessGroup</key><true/>
+  <key>StandardOutPath</key><string>/Users/codev/fleet-boot.launchd.out</string>
+  <key>StandardErrorPath</key><string>/Users/codev/fleet-boot.launchd.err</string>
+</dict>
+</plist>
