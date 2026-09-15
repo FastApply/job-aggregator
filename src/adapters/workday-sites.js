@@ -66,7 +66,7 @@ const WORKDAY_SITES = {
   bigcommerce: { wdNum: 12, sites: ["Commerce"] },
   bloomberg: { wdNum: 1, sites: ["Bloombergindustrygroup_External_Career_Site"] },
   blueorigin: { wdNum: 5, sites: ["BlueOrigin"] },
-  boeing: { wdNum: 1, sites: ["EXTERNAL_CAREERS", "external_subsidiary"] },
+  boeing: { wdNum: 1, sites: ["EXTERNAL_CAREERS", "external_subsidiary", "external_ukcontingentworker"] },
   bostondynamics: { wdNum: 1, sites: ["Boston_Dynamics"] },
   bristolmyerssquibb: { wdNum: 5, sites: ["BMS"] },
   broadridge: { wdNum: 5, sites: ["Careers"] },
@@ -361,6 +361,43 @@ const WORKDAY_SITES = {
   zillow: { wdNum: 5, sites: ["Zillow_Group_External"] },
   zoetis: { wdNum: 5, sites: ["zoetis"] },
   zuehlke: { wdNum: 3, sites: ["Zuhlke-Careers"] },
+// 2026-09-15: 31 tenants from an external Workday sweep, every coordinate below confirmed
+  // against /wday/cxs/<tenant>/<site>/jobs before being added (48,051 jobs across the 42
+  // validated). Of the corpus's 11 largest tenants, 7 were missing from this table and probing
+  // robots.txt for them each crawl -- ccf 2,123, freseniusmedicalcare 2,000, spectrumhealth
+  // 1,980, hyvee 1,626, generalmotors 429, uline 428, ubc 113. walmart was submitted as wd5 and
+  // rejected (HTTP 422); the existing wd504 entry resolves to 2,000 and is kept.
+  beckgroup: { wdNum: 12, sites: ["beckgroupexternal"] },
+  billgosling: { wdNum: 5, sites: ["Global"] },
+  bnl: { wdNum: 1, sites: ["Externa"] },
+  ccf: { wdNum: 1, sites: ["ClevelandClinicCareers"] },
+  centerlight: { wdNum: 5, sites: ["centerlight"] },
+  championx: { wdNum: 1, sites: ["ChampionX_External"] },
+  cityblockhealth: { wdNum: 1, sites: ["CityblockExternalCareerSite"] },
+  cw: { wdNum: 1, sites: ["External"] },
+  elevancehealth: { wdNum: 1, sites: ["ANT"] },
+  fhcsd: { wdNum: 1, sites: ["MAIN"] },
+  flsmidth: { wdNum: 3, sites: ["FLS_Global"] },
+  freseniusmedicalcare: { wdNum: 3, sites: ["fme"] },
+  generalmotors: { wdNum: 5, sites: ["Careers_GM"] },
+  gevernova: { wdNum: 5, sites: ["Vernova_ExternalSite"] },
+  goodyear: { wdNum: 1, sites: ["GoodyearCareers"] },
+  graco: { wdNum: 501, sites: ["Graco_Careers"] },
+  guidewire: { wdNum: 5, sites: ["external"] },
+  highpoint: { wdNum: 503, sites: ["HighPoint"] },
+  hitachi: { wdNum: 1, sites: ["hitachi"] },
+  holmanautogroup: { wdNum: 1, sites: ["HolmanEnterprisesCareers"] },
+  hyvee: { wdNum: 1, sites: ["HyVeeCareers"] },
+  medline: { wdNum: 5, sites: ["Medline"] },
+  mhs: { wdNum: 1, sites: ["Careers"] },
+  mtb: { wdNum: 5, sites: ["Restructure"] },
+  ontic: { wdNum: 103, sites: ["OnticCareers"] },
+  premierinc: { wdNum: 1, sites: ["External_Professional"] },
+  probegroup: { wdNum: 3, sites: ["careers"] },
+  spectrumhealth: { wdNum: 5, sites: ["CorewellHealthCareers"] },
+  ubc: { wdNum: 10, sites: ["ubcstaffjobs"] },
+  uline: { wdNum: 1, sites: ["Uline_Careers"] },
+  ummh: { wdNum: 1, sites: ["Careers"] },
 };
 
 module.exports = { WORKDAY_SITES };
