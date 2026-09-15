@@ -58,7 +58,7 @@ const PROBES = {
   personio:        { conc: 6, req: (s) => [`https://${enc(s)}.jobs.personio.de/xml`], count: countTag('position') },
   teamtailor:      { conc: 6, req: (s) => [`https://${enc(s)}.teamtailor.com/jobs.rss`], count: countTag('item') },
   smartrecruiters: { conc: 4, req: (s) => [`https://api.smartrecruiters.com/v1/companies/${enc(s)}/postings?limit=1`], count: (t) => { const d = JSON.parse(t); return typeof d.totalFound === 'number' ? d.totalFound : -1; } },
-  bamboohr:        { conc: 4, req: (s) => [`https://${enc(s)}.bamboohr.com/careers/list`], count: arr((d) => d.result) },
+  bamboohr:        { conc: 4, req: (s) => [`https://${enc(s)}.bamboohr.com/careers/list`, { redirect: 'manual' }], count: arr((d) => d.result) },
   rippling:        { conc: 4, req: (s) => [`https://api.rippling.com/platform/api/ats/v1/board/${enc(s)}/jobs`], count: arr((d) => d) },
   workable:        { conc: 2, pauseMs: 600, req: (s) => [`https://apply.workable.com/api/v3/accounts/${enc(s)}/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '', location: [], department: [], worktype: [], remote: [] }) }], count: (t) => { const d = JSON.parse(t); return typeof d.total === 'number' ? d.total : (Array.isArray(d.results) ? d.results.length : -1); } },
 };
