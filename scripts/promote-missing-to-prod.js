@@ -134,12 +134,37 @@ function urlKey(u) {
  * outcome. The real fix is a second resolver — the handover names 1.1.1.1 — but that is a
  * change to the machine, not to this script.
  */
+/**
+ * Retry a startup step through a transient network fault.
+ *
+ * The per-employer loop already rides out lost routes (TRANSIENT_NET), but everything before it
+ * ran exactly once. Two cycles on 2026-09-14 died there in under 20 seconds with nothing done:
+ * 11:00 "getaddrinfo ENOTFOUND" and 23:00 "Connection terminated due to connection timeout", both
+ * on the prod company-index load. A blip at 11:00:01 cost the whole six-hour slot. Startup is one
+ * or two queries, so waiting up to ~5 minutes for the network to come back is cheap; the
+ * alternative is losing the cycle.
+ */
+async function startupRetry(label, fn, attempts = 8) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!TRANSIENT_NET.test(e.message || '') || i >= attempts) throw e;
+      const wait = Math.min(5000 * 2 ** (i - 1), 60000);
+      console.log(`  ${label}: ${e.message} — retry ${i}/${attempts - 1} in ${wait / 1000}s`);
+      await sleep(wait);
+    }
+  }
+}
+
 async function pinHostToIp(url) {
   try {
     const dns = require('dns').promises;
     const u = new URL(url);
     if (/^\d+\.\d+\.\d+\.\d+$/.test(u.hostname)) return url;   // already an IP
-    const { address } = await dns.lookup(u.hostname, { family: 4 });
+    // Retried: falling back to the bare hostname on a failed lookup just moves the same
+    // ENOTFOUND to the first query, which is how the 11:00 cycle died.
+    const { address } = await startupRetry('DNS pin', () => dns.lookup(u.hostname, { family: 4 }));
     console.log(`  DNS pinned: ${u.hostname} -> ${address}`);
     u.hostname = address;
     return u.toString();
@@ -177,8 +202,8 @@ async function pinHostToIp(url) {
   const prodCompanyIndex = new Map();
   {
     const t0 = Date.now();
-    const { rows } = await prod.query(
-      'SELECT id, ats, lower(ats_slug) AS s FROM companies WHERE ats_slug IS NOT NULL ORDER BY id');
+    const { rows } = await startupRetry('prod company index', () => prod.query(
+      'SELECT id, ats, lower(ats_slug) AS s FROM companies WHERE ats_slug IS NOT NULL ORDER BY id'));
     for (const r of rows) {
       const k = `${r.ats}|${r.s}`;
       if (!prodCompanyIndex.has(k)) prodCompanyIndex.set(k, r.id);  // lowest id wins
