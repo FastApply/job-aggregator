@@ -77,6 +77,10 @@ async function ensureIndex() {
       'ats', 'employment_type', 'workplace_type', 'experience_level',
       'visa_sponsorship', 'is_remote', 'remote_worldwide', 'role_category',
       'company_id', 'location', 'location_countries', 'location_tokens', 'posted_ts',
+      // Salary filtering compares the annualised value, never the raw one — see toDocument().
+      // salary_currency is filterable alongside it because no FX conversion happens, so an
+      // amount without a currency would mix USD with INR.
+      'salary_min_annual', 'salary_currency',
     ],
     sortableAttributes: ['posted_ts', 'first_seen_ts'],
     // Match the board's ordering: freshness first. Meilisearch still applies its relevance
@@ -145,6 +149,13 @@ function toDocument(row) {
     url: row.url,
     salary_min: num(row.salary_min),
     salary_max: num(row.salary_max),
+    // Annualised copies, which are the ONLY salary numbers a filter may compare. salary_min
+    // above is the raw posted figure and its interval varies per row — hourly and yearly are
+    // near-equally common in the corpus — so filtering on it would rank $50/hr and $50,000/yr
+    // as the same salary. Null for rows whose interval is missing, unrecognised, or implausible
+    // for the amount; those are simply not salary-filterable.
+    salary_min_annual: num(row.salary_min_annual),
+    salary_max_annual: num(row.salary_max_annual),
     salary_currency: row.salary_currency || null,
     salary_interval: row.salary_interval || null,
     posted_at: row.posted_at || null,

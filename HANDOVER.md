@@ -13,7 +13,7 @@ If a number is outside the range, that is the finding — say so rather than mov
 
 These are **not in the repo** and nothing works without the first one:
 
-- [ ] `.env` contents (`DATABASE_URL`, `API_SECRET`, `MEILI_HOST`, `MEILI_KEY`)
+- [ ] `.env` contents (`DATABASE_URL`, `API_SECRET`, `MEILI_HOST`, `MEILI_MASTER_KEY`)
 - [ ] `data/logo/processed.txt` — 40,268 reviewed companies, exists only on the old machine
 - [ ] `job-board-health.log` — the behavioural baseline these numbers come from
 - [ ] Heroku access (`fastapply-board`), Render access, GitHub push access
@@ -39,13 +39,23 @@ replacing them. `NODE_ENV=production` is required — it enables the TLS that He
 
 ## 2. Search is served by Meilisearch, not Postgres
 
+`BOARD_API_TOKEN` is a **JWT signed with `API_SECRET`**, not `API_SECRET` itself — see
+`src/api/middleware/auth.js`, which calls `jwt.verify(token, config.API_SECRET)`. Sending the
+raw secret returns `401 Invalid or expired token`, which reads like a credential you do not
+have rather than a token you built wrong. Mint one:
+
 ```bash
+BOARD_API_TOKEN=$(SEC="$(heroku config:get API_SECRET -a fastapply-board)" node -e \
+  "console.log(require('jsonwebtoken').sign({sub:'check'}, process.env.SEC, {expiresIn:'10m'}))")
+
 curl -s -H "Authorization: Bearer $BOARD_API_TOKEN" \
   "https://job-aggregator-web-gt9m.onrender.com/api/jobs?q=Software%20Engineer&limit=20" \
   | python3 -c "import json,sys; m=json.load(sys.stdin)['meta']; print(m['servedBy'], m['total'])"
 ```
 
-Expect `meili` and a large total, in **under 2 seconds**.
+Expect `meili` and a large total, in **under 2 seconds**. A `total` of exactly 10000 is
+`COUNT_CAP`, not an error — broad queries stop counting there. Measured 2026-08-30:
+`meili 10000` in 0.55s.
 
 `servedBy: postgres` is a **failure**, not a fallback working as intended. Postgres cannot serve
 this query set at 5M rows; it is the exact path that took the board down on 2026-08-20.

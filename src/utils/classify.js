@@ -202,11 +202,45 @@ const VISA_NO_PATTERNS = [
   // "not in a position to offer/provide visa sponsorship"
   /\bnot\s+in\s+a\s+position\s+to\s+(?:offer|provide)\s+(?:[\w\s-]*)?sponsor/i,
   /\bno\s*(?:h[\s-]?1b\s*)?(?:visa\s*)?sponsorship\b/i,
+  // Same statement with a qualifier wedged in: "No NEW H1B sponsorship available". The rule
+  // above requires `no` to sit adjacent to `sponsorship`, so one adjective defeats it — and the
+  // sentence that follows in practice is "H1B transfers welcomed", which the YES list matches on
+  // /h1b\s*transfer/. The posting therefore classified as `yes` while literally opening with a
+  // refusal. Measured against employer-stated H1B data: 756 of 757 rows carrying this phrasing
+  // were labelled `yes`, all wrong.
+  //
+  // The qualifiers are enumerated rather than written as a generic `(?:\w+\s+)*` gap. An
+  // unbounded gap makes this pattern span a whole clause, so "there is no reason to doubt our
+  // generous visa sponsorship" would read as a negation — trading a known false positive for a
+  // worse and harder-to-spot one.
+  /\bno\s+(?:new|additional|further|current|immediate)\s+(?:h[\s-]?1b\s*)?(?:visa\s*)?sponsorship\b/i,
   /\bsponsorship\s*(?:is\s*)?(?:not|unavailable)\b/i,
-  /\bwithout\s*(?:visa\s*)?sponsorship\b/i,
+  // The subject-first negation: "visa sponsorship will not be available/offered". The rule above
+  // only tolerates an optional "is" before "not", so any other auxiliary slipped past it and the
+  // posting classified as null — a refusal read as "unknown".
+  /\bsponsorship\s*(?:is|are|will|would|may|can|shall)?\s*not\s*(?:be\s*)?(?:available|offered|provided|possible|supported)\b/i,
+  // "...without sponsorship" is a refusal ONLY when it is about a visa. US export-control
+  // boilerplate reads "able to access technology subject to export laws WITHOUT SPONSORSHIP for
+  // an export license", which is about an export licence, not immigration. Cloudflare's whole
+  // job set classified 'no' on this sentence alone.
+  /\bwithout\s*(?:visa\s*)?sponsorship\b(?!\s+for\s+an?\s+export)/i,
   /\bnot\s*eligible\s*for\s*(?:visa\s*)?sponsorship\b/i,
-  /\bmust\s*(?:be\s*)?(?:legally\s*)?(?:authorized|eligible)\s*to\s*work\b/i,
+  // REMOVED: /\bmust\s*(?:be\s*)?(?:legally\s*)?(?:authorized|eligible)\s*to\s*work\b/
+  //
+  // "Applicants must be legally authorized to work in the United States" is boilerplate on a
+  // huge share of US postings and says only that work authorization is required — NOT that the
+  // employer refuses to sponsor. Sponsoring an H1B is precisely how an employer GRANTS that
+  // authorization, so the phrase is not evidence either way. It fired on 20.8% of all rows
+  // stored as 'no' in production while the genuine refusal form below fired on 6.0%, so it was
+  // the single largest source of false negatives — jobs hidden from exactly the sponsorship-
+  // seeking users this column exists to serve.
+  //
+  // The refusal is the "WITHOUT sponsorship" clause, not the authorization requirement. The
+  // rules below require that clause. The gap is bounded and cannot cross a sentence boundary,
+  // so it will not join an authorization sentence to an unrelated later mention of sponsorship.
   /\bauthorized\s*to\s*work\s*in\s*the\s*(?:united\s*states|u\.?s\.?|us)\s*without\b/i,
+  /\b(?:authorized|eligible)\s+to\s+work\s+[^.!?\n]{0,80}?\bwithout\s+(?:visa\s+|employer\s+|company\s+|any\s+|the\s+need\s+for\s+)*sponsorship/i,
+  /\b(?:do(?:es)?\s+not|will\s+not|cannot)\s+(?:require|need)\s+sponsorship\s+(?:now|currently|either)?/i,
   /\bno\s*(?:work\s*)?visa\b/i,
   /\bneed\s*not\s*apply\b.*\b(?:h[\s-]?1b|visa)\b/i,
   /\b(?:h[\s-]?1b|visa)\b.*\bneed\s*not\s*apply\b/i,
@@ -249,17 +283,24 @@ const VISA_NO_PATTERNS = [
   /\bcan'?t\s*sponsor\b/i,
 ];
 
+// Linking verbs allowed between "sponsorship" and "available". Without this the positive
+// patterns have the same adjacency bug the negative ones had: "visa sponsorship IS available"
+// matched nothing and classified as null. Enumerated for the same reason as the NO side — a
+// generic gap would span a clause and start matching negations. Note `will/may/can be` cannot
+// swallow "will NOT be", so negated forms still fall through to the NO list, which runs first.
+const IS = '(?:\\s*(?:is|are|will\\s+be|would\\s+be|may\\s+be|can\\s+be|is\\s+currently))?';
+
 const VISA_YES_PATTERNS = [
-  /\bvisa\s*sponsor(?:ship)?\s*(?:available|offered|provided|included)\b/i,
+  new RegExp(`\\bvisa\\s*sponsor(?:ship)?${IS}\\s*(?:available|offered|provided|included)\\b`, 'i'),
   /\bwilling\s*to\s*sponsor\b/i,
   /\bopen\s*to\s*sponsor/i,
   /\bproudly\s*sponsor/i,
   /\bwe\s*(?:do\s*)?sponsor\s*(?:h[\s-]?1b|work\s*visa|visa)\b/i,
-  /\bvisa\s*(?:support|assistance)\s*(?:available|offered|provided|included)\b/i,
+  new RegExp(`\\bvisa\\s*(?:support|assistance)${IS}\\s*(?:available|offered|provided|included)\\b`, 'i'),
   /\bimmigration\s*(?:support|assistance|sponsorship)\s*(?:available|offered|provided|included|is\s*available)\b/i,
   /\b(?:offer|provide)s?\s*(?:visa|immigration)\s*(?:support|assistance|sponsorship)\b/i,
   /\bh[\s-]?1b\s*transfer/i,
-  /\bh[\s-]?1b\s*(?:visa\s*)?sponsor(?:ship)?\s*(?:available|offered|provided|included|supported)\b/i,
+  new RegExp(`\\bh[\\s-]?1b\\s*(?:visa\\s*)?sponsor(?:ship)?${IS}\\s*(?:available|offered|provided|included|supported)\\b`, 'i'),
   // Removed: /\bvisa\s*arrangements\b/i — too broad, matches travel visa logistics
   // "Sponsorship Available: Yes" — explicit positive with colon format
   /\bsponsorship\s*available\s*:\s*yes\b/i,

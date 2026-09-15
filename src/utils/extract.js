@@ -145,7 +145,31 @@ function extractSalary(text) {
 /**
  * Detect workplace type from job fields.
  */
+// A location that is ONLY a global token -- "Global", "Worldwide", "Anywhere", "Remote - Global
+// Anywhere" -- is the employer's own structured statement that the role has no place attached.
+// Anchored to the whole string on purpose, because "global" is common inside real place and
+// office names: "Bonifacio Global City, , Philippines" (a district of Manila), "NYC Global HQ",
+// "Berlin | Global Team" must NOT be read as worldwide, and a substring test reads all three
+// as global. Verified against the live corpus: this matches 972 jobs and excludes every one of
+// those.
+const LOCATION_IS_GLOBAL = /^\s*(remote\s*[-–—:]?\s*)?(global|worldwide|anywhere)(\s+(anywhere|global|remote))?\s*$/i;
+
 function extractWorkplaceType(title, location, description) {
+  // Checked BEFORE the combined blob below, which is the bug this guards.
+  //
+  // That blob joins title + location + description and tests /\bhybrid\b/ across all of it, so a
+  // single word in a long body overrode the location entirely. Measured on greenhouse/platacard
+  // "Risk Data Governance Lead", location "Worldwide", whose 11,117-character description says
+  // "Git-based, wiki, or hybrid" -- about DOCUMENTATION TOOLING. That set workplace_type
+  // 'hybrid', and classifyRemote() short-circuits on that before it ever looks at the location,
+  // so is_remote became false and remote_worldwide with it, dropping a confirmed
+  // work-from-anywhere job off the global-remote board. 201 live jobs whose location is purely a
+  // global token were stored Onsite or Hybrid this way.
+  //
+  // The location's own wording can still say hybrid/on-site ("USA and Global (Hybrid)"), which
+  // fails the anchored match above and falls through to the normal rules.
+  if (LOCATION_IS_GLOBAL.test(location || '')) return 'remote';
+
   const fields = [title, location, description].filter(Boolean).join(' ').toLowerCase();
 
   if (/\bremote\b|\bwork from home\b|\bwfh\b|\bfully remote\b|\b100% remote\b/.test(fields)) {

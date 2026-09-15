@@ -156,6 +156,78 @@ DATABASE_URL=... node scripts/discover-workable-by-keyword.js --file keywords.tx
 | `import-ats-companies-csv.js` | Seed from the `ats-scrapers` tenant lists. |
 | `sync-jobs-to-postgres.js` | Push local SQLite rows into Postgres. |
 
+**`fetch-xeruit.js`** — the Xeruit corpus (~24k jobs), into the **local SQLite DB**, not Postgres.
+Worth running for the descriptions: they arrive complete on every row (median ~5,000 chars),
+which is the field our own crawlers most often have to backfill afterwards.
+
+```bash
+XERUIT_TOKEN=<jwt> node scripts/fetch-xeruit.js              # fetch + load
+node scripts/fetch-xeruit.js --from-file dump.jsonl          # load a saved dump
+node scripts/fetch-xeruit.js --from-file dump.jsonl --report # map + diagnose, write nothing
+XERUIT_TOKEN=<jwt> node scripts/fetch-xeruit.js --dump raw.jsonl --no-load
+```
+
+`XERUIT_TOKEN` is a user JWT from app.xeruit.com — the endpoint 401s without one and they last
+24 hours. The API caps `limit` at 100, so the walk is 242 pages and takes ~20 minutes; `--dump`
+saves the raw JSON so the mapping can be re-run without re-fetching.
+
+**It refuses to start with `DATABASE_URL` set** (override: `ALLOW_POSTGRES=1`). Every importer
+here shares one connection module, so an inherited `DATABASE_URL` would push 24k aggregated
+rows straight into the live board. Load locally, look at it, then push deliberately.
+
+Three source fields are deliberately *not* trusted into columns — `workType` is `remote` on all
+24,124 external rows and is not even a filterable field on their API, and `level` /
+`visaSponsorship` are their LLM's guesses. `classify.js` decides what lands in the columns so
+this corpus stays comparable with every other row in the table; the source values are kept in
+`raw_data`. Company identity comes from `externalJobLink`, never from `companyName` (free text,
+and it collides) — see `xeruit-board.js`.
+
+**`fetch-simplify.js`** + **`load-simplify.js`** + **`enrich-from-simplify.js`** — Simplify.jobs,
+~1.72M rows, into the **local SQLite DB**.
+
+```bash
+SIMPLIFY_KEY=<x-typesense-api-key> node scripts/fetch-simplify.js raw.jsonl  # ~25 min, 6,903 reqs
+node scripts/load-simplify.js raw.jsonl              # map + upsert (--report to dry-run)
+node scripts/enrich-from-simplify.js                 # SHADOW; APPLY=1 to write
+```
+
+The key is the scoped search-only key Simplify ships to its own browser client (lift it from the
+`x-typesense-api-key` header). It carries a server-side `exclude_fields` that **no query can
+override** — verified: asking `include_fields=url,title,id` returns only `id` and `title`. So
+there is no employer apply URL and no description, ever. Treat this as metadata, not postings.
+
+Two hard API limits shape `fetch-simplify.js`, and the second is a trap:
+
+| limit | value |
+|---|---|
+| `per_page` | 250 (251 is an error) |
+| offset | **exactly 1,000,000 rows** |
+
+Past page 4000 the API returns an **empty result set with no error**, so a plain offset walk
+looks like it succeeded while silently capturing 58% of the corpus. The script instead cuts the
+collection into disjoint half-open windows on `shuffle_key` (a stable random int, 0–999,999),
+each ~86k docs and well inside the ceiling. Windows are *ranges* rather than a `>last` cursor
+because `shuffle_key` is **not unique** — 250 consecutive rows spanned 122 distinct values, and a
+cursor would skip every row sharing a boundary value.
+
+`url` is synthesised as `https://simplify.jobs/p/{posting_id}`. That is a real, checkable URL: a
+live posting returns 200 and a bogus UUID returns 404, so the dead-job pruner works against it
+unmodified. `description` is left NULL.
+
+These rows **cannot merge** with natively-crawled jobs — with no employer board URL there is no
+`(ats, ats_slug)` to key on, so they live under `ats='simplify'` and a posting we also crawl from
+Greenhouse exists twice. `enrich-from-simplify.js` is the payoff: it copies the facts we cannot
+get elsewhere (employer-stated H1B, structured salary, stated seniority, logos) onto jobs we
+already hold, matching on normalised `(company_name, title)`. It only ever fills a column that is
+already empty, and only from an unambiguous match, so a bad match can add noise but never
+destroy an employer-sourced fact.
+
+**`xeruit-board.js`** — board-link resolver used by the above (library, not a script). Turns a
+posting URL into `(ats, ats_slug, native job id)`. The native id is the part that matters: it is
+what lets a Xeruit row and a natively-crawled row of the same posting collide on
+`(external_id, company_id)` instead of duplicating, and it is only ever set where the URL id is
+provably the id our adapter reads. ~62% of the corpus resolves that far.
+
 ### Cleanup and repair
 
 **`prune-dead-jobs-render.js`** — Puppeteer pruner. Renders pages to catch boards that return
@@ -192,6 +264,39 @@ node scripts/meili-backfill.js          # copy jobs straight in; read-only on Po
 
 **`test-sync-batch.js`** — verifies the batched `syncForCompany` upsert. Worth running after any
 change to sync.
+
+**`test-salary.js`** — salary annualisation. Salary is filterable via `salary_min_annual` /
+`salary_max_annual`, numeric copies written by `syncForCompany` through
+`src/utils/salary.js`. Two reasons the raw columns cannot be filtered: they are TEXT (so
+`> 200000` compares strings and `"90000"` sorts above `"200000"`), and the interval varies as
+widely as the amount — hourly and yearly rows are near-equally common, so $50/hr and $50,000/yr
+are the same number to a naive comparison.
+
+The per-interval plausibility ceilings in that file are the part worth not "simplifying" away.
+Stored weekly amounts fall into two clumps: ~1,000 rows under $9k (real weekly rates) and ~900
+between $60k and $900k, which are annual salaries carrying a weekly label — one real row reads
+"Alliances Manager, 70,000-90,000 weekly", i.e. $3.64M/yr. A single absolute ceiling passed all
+of them, and they then topped every high-salary search. Rows that fail a ceiling get NULL, so
+they are excluded from salary filters rather than filtered wrongly.
+```bash
+node scripts/test-salary.js
+DATABASE_URL=... NODE_ENV=local node scripts/backfill-salary-annual.js   # SHADOW; APPLY=1 writes
+```
+A salary filter **excludes unpriced jobs** — asking for "over 100k" and being shown jobs with no
+stated salary is not a useful answer. `salary_currency` defaults to USD (89% of priced rows)
+because no FX conversion happens and the amount alone would otherwise mix USD with INR.
+
+**`test-classify-visa.js`** — `classifyVisa()`, written around a real miss. `VISA_NO_PATTERNS`
+required `no` to sit adjacent to `sponsorship`, so "No **new** H1B sponsorship available" was not
+read as a refusal; control fell through to `VISA_YES_PATTERNS`, which matched `/h1b\s*transfer/`
+against the "H1B transfers welcomed" line that follows it in the wild. Postings opening with a
+refusal classified as `yes` — 756 of 757 such rows, graded against employer-stated H1B data.
+The false-positive cases in the file matter as much as the fix: the obvious repair is a generic
+`(?:\w+\s+)*` gap, which would read "no reason to doubt our generous visa sponsorship" as a
+refusal, so the qualifier list is enumerated and that stays tested.
+```bash
+node scripts/test-classify-visa.js
+```
 
 ---
 
