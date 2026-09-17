@@ -196,12 +196,39 @@ test('a single-role search is untouched — still one query, still strict', asyn
   assert.equal(res.rows.length, 2);
 });
 
-test('deep pages fall back rather than coming back empty', async () => {
-  const calls = stubIndex(CORPUS);
-  const res = await jobsSearch.search({ q: 'Industrial Security,Project Manager', limit: 50, offset: 400 });
-  assert.equal(calls.multiSearch.length, 0, 'past the merge depth the old single-query path serves');
+test('two roles page deep through the merge; only past the shared budget does it fall back', async () => {
+  let calls = stubIndex(CORPUS);
+  // page 5 of a 2-role search: the flat 200-depth cap used to drop this to the old path
+  let res = await jobsSearch.search({ q: 'Industrial Security,Project Manager', limit: 50, offset: 200 });
+  assert.equal(calls.multiSearch.length, 1, 'page 5 of two roles is still served by the merge');
+  assert.ok(res);
+  calls = stubIndex(CORPUS);
+  res = await jobsSearch.search({ q: 'Industrial Security,Project Manager', limit: 50, offset: 4000 });
+  assert.equal(calls.multiSearch.length, 0, 'past the budget the old single-query path serves');
   assert.equal(calls.search.length, 1);
   assert.ok(res, 'a deep page must still return a result object');
+});
+
+test('pagination is consistent: page two continues where page one stopped', async () => {
+  stubIndex(CORPUS);
+  const q = 'Industrial Security,Physical Security,Project Manager';
+  const p1 = await jobsSearch.search({ q, limit: 10, offset: 0 });
+  const p2 = await jobsSearch.search({ q, limit: 10, offset: 10 });
+  const all = await jobsSearch.search({ q, limit: 20, offset: 0 });
+  assert.deepEqual([...p1.rows, ...p2.rows].map((r) => r.id), all.rows.map((r) => r.id),
+    'two pages of ten must equal one page of twenty, in order — no repeats, no gaps');
+});
+
+test('widening is reported on the result, and only when every role came back empty', async () => {
+  stubIndex(CORPUS);
+  const some = await jobsSearch.search({ q: 'Physical Security,Underwater Basket Weaver', limit: 10 });
+  assert.equal(some.widened, false, 'one role with real hits means no widening');
+  assert.equal(some.rows.filter((r) => /Physical Security/.test(r.title)).length, 2);
+  // Neither role matches strictly; 'last' drops the tail of the first one to "security", which
+  // the loose retry can rescue — that, and only that, is a widened result.
+  const none = await jobsSearch.search({ q: 'Security Zeppelin Pilot,Basket Weaver', limit: 10 });
+  assert.equal(none.widened, true, 'all roles empty: the loose retry ran and the result says so');
+  assert.ok(none.rows.length > 0);
 });
 
 test('an index with no /multi-search degrades to the old path instead of failing', async () => {

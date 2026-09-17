@@ -197,23 +197,21 @@ function buildQuery(filters) {
 }
 
 /**
- * How many results to pull per role before merging. A role can be starved by the merge (its
- * hits dedupe away against an earlier role, or it simply has fewer than its share), so each
- * sub-query fetches the whole page depth rather than `limit / roleCount` — otherwise the last
- * page of a paginated multi-role search comes back short.
+ * How many hits, summed over every role, one multi-role request may pull from the index.
+ *
+ * The merge happens in memory over the hits actually fetched, so serving offset N needs
+ * N + limit rows from EVERY role (a role can be starved by the merge — its hits dedupe away
+ * against an earlier role, or it has fewer than its share — so each sub-query fetches the whole
+ * page depth, not `limit / roleCount`). The budget is shared, so the depth a request can reach
+ * scales with how many roles it carries: two roles page 40 deep at 50/page, three page 26, the
+ * automation's 24-role worst case pages 3. A flat per-role cap was the wrong shape — it let a
+ * two-role board search fall off the merge at page 5, where the user would have silently
+ * dropped back to seeing one role, which is the symptom this exists to remove.
+ *
+ * Past the budget the request keeps the old single-query behaviour: imperfect, but exactly what
+ * production served before, and never an EMPTY page at a depth the total says exists.
  */
-const MULTI_ROLE_FETCH_CAP = 200;
-
-/**
- * How deep a multi-role search will paginate before handing the request back to the single-query
- * path. The merge happens in memory over the hits actually fetched, so serving offset N needs
- * N + limit rows from EVERY role; past this depth that stops being a reasonable amount of work
- * to ask the index for. Beyond it the caller keeps the old single-query behaviour, which is
- * imperfect but is exactly what production does today — a deep page must not come back EMPTY
- * just because the merge could not reach it. At the board's 50/page that is the first 4 pages,
- * and the automation only ever reads page one.
- */
-const MULTI_ROLE_MAX_DEPTH = MULTI_ROLE_FETCH_CAP;
+const MULTI_ROLE_HIT_BUDGET = 4000;
 
 /**
  * Roles beyond this are dropped from a single request.
@@ -250,7 +248,7 @@ function interleaveByRole(perRole) {
     for (const hits of perRole) {
       const hit = hits[rank];
       if (!hit) continue;
-      const key = String(hit.id);
+      const key = hit.id != null ? String(hit.id) : (hit.url || JSON.stringify(hit));
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(hit);
@@ -297,7 +295,7 @@ function mergeFacets(results) {
  */
 async function searchMultiRole(roles, base, { limit, offset, filters }) {
   const depth = offset + limit;
-  if (depth > MULTI_ROLE_MAX_DEPTH) return null;
+  if (depth * roles.length > MULTI_ROLE_HIT_BUDGET) return null;
   // No `facets` per sub-query. /api/facets serves the board's facet counts from its own
   // zero-query search (loadFacets -> jobsSearch.facets), and the route reads only rows, total
   // and totalIsCapped off this result — the facetDistribution a search computes is returned and
@@ -335,6 +333,7 @@ async function searchMultiRole(roles, base, { limit, offset, filters }) {
   // which is the precision complaint this file already fixed once. Only a search that found
   // nothing at all is worth trading precision for, because an empty board is worse than a
   // loose one.
+  let widened = false;
   const totalHits = results.reduce((n, r) => n + ((r && r.hits) || []).length, 0);
   if (totalHits === 0) {
     const loose = await meili.multiSearch(
@@ -349,6 +348,7 @@ async function searchMultiRole(roles, base, { limit, offset, filters }) {
         filters: summariseFilters(filters),
       }, 'Meili: no exact-match results for any role, widened the query');
       results = loose;
+      widened = true;
     }
   }
 
@@ -366,6 +366,11 @@ async function searchMultiRole(roles, base, { limit, offset, filters }) {
     hits: merged.slice(offset, offset + limit),
     total,
     facetDistribution: mergeFacets(results),
+    // Surfaced as meta.widened by the route (feat/search-widened-flag): a client that asked for
+    // roles and is handed jobs matching only some of their words needs to know. FastApply's
+    // starved-platform rescue refuses a widened page rather than paying an AI verdict to reject
+    // every row of it.
+    widened,
   };
 }
 
@@ -532,7 +537,7 @@ async function search(filters = {}) {
       total,
       totalIsCapped: total >= COUNT_CAP,
       facets: res.facetDistribution || null,
-      widened,
+      widened: widened || res.widened === true,
     };
   } catch (err) {
     // Never let an index problem break the board — but say so. Falling back is not free: the
