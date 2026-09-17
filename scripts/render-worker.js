@@ -203,6 +203,12 @@ startCrawler();
 setTimeout(runDescBackfill, 5 * 60 * 1000);
 setTimeout(runClassify, 2 * 60 * 1000);
 setTimeout(runStaleCleanup, 5 * 60 * 1000);
+async function runSearchCanaryLoop() {
+  // src/tasks/search-canary.js — two-role queries against the deployed API, Telegram on failure.
+  try { await require('../src/tasks/search-canary').runSearchCanary(); } catch (e) { logger.error({ err: e.message }, 'search canary error'); }
+  setTimeout(runSearchCanaryLoop, 6 * 60 * 60 * 1000);
+}
+setTimeout(runSearchCanaryLoop, 3 * 60 * 1000);
 setTimeout(runDeadPrune, 8 * 60 * 1000);
 setTimeout(runMeiliSync, 90 * 1000);
 // demand-crawl: ensure its columns exist, then start the loop a bit after boot.
