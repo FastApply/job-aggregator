@@ -211,3 +211,12 @@ test('an index with no /multi-search degrades to the old path instead of failing
   assert.equal(calls.search.length, 1, 'falls through to the single-query path');
   assert.ok(res.rows.length > 0);
 });
+
+test('a /multi-search 404 uses the single-query path, not the Postgres fallback', async () => {
+  const calls = stubIndex(CORPUS);
+  meili.multiSearch = async () => { const e = new Error('Meili POST /multi-search -> 404'); e.status = 404; throw e; };
+  const res = await jobsSearch.search({ q: 'Industrial Security,Project Manager', limit: 10 });
+  assert.ok(res, 'must not return null — null sends the request to a Postgres query that times out');
+  assert.equal(calls.search.length, 1);
+  assert.ok(res.rows.length > 0);
+});

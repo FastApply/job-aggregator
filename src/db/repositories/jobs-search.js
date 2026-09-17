@@ -301,7 +301,19 @@ async function searchMultiRole(roles, base, { limit, offset, filters }) {
     matchingStrategy: 'all',
   }));
 
-  let results = await meili.multiSearch(queries);
+  let results;
+  try {
+    results = await meili.multiSearch(queries);
+  } catch (err) {
+    // An index too old to have /multi-search answers 404, which `call` raises. Let the caller
+    // use the single-query path instead of letting this reach search()'s catch, which would
+    // send EVERY multi-role board search to Postgres — measured there at 9s, 18s with a date
+    // window, i.e. past the statement timeout. A worse answer beats no answer; a timeout is
+    // neither.
+    logger.warn({ err: err.message, roles: roles.length },
+      'Meili multi-search unavailable — using the single-query path for this multi-role search');
+    return null;
+  }
   if (!results) return null;
 
   // Same recall safety net the single-role path has, applied to the search as a WHOLE rather
