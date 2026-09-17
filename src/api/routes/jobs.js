@@ -6,6 +6,7 @@ const { stripHtml } = require('../../utils/html');
 const { recordSearchDemand, getTopDemand } = require('../searchDemand');
 const { parsePostedWindow } = require('../../utils/posted-window');
 const logger = require('../../logger');
+const retire = require('../../db/repositories/jobs-retire');
 
 const router = Router();
 
@@ -351,6 +352,60 @@ router.get('/api/facets', async (req, res) => {
   } finally {
     facetsInFlight = null;
   }
+});
+
+/**
+ * POST /api/jobs/retire — the apply automation reporting postings it found gone.
+ *
+ * Body: { ids: [123], externalIds: ["greenhouse_456"], reason: "apply page 404", dryRun: false }
+ * Identify jobs by our id (returned with every job by /api/jobs) or external_id. Up to 500 per
+ * call. Removal is soft, so a mistaken report is reversible and the row still dedupes future
+ * crawls; the search index drops it on the next sync via the index_dirty_at outbox.
+ */
+router.post('/api/jobs/retire', async (req, res) => {
+  const { ids, externalIds } = retire.parseIdentifiers(req.body);
+  const total = ids.length + externalIds.length;
+  if (!total) {
+    return res.status(400).json({ error: 'Provide ids[] (job id) or externalIds[] to retire' });
+  }
+  if (total > retire.MAX_PER_CALL) {
+    return res.status(400).json({ error: `Too many identifiers: ${total} (max ${retire.MAX_PER_CALL} per call)` });
+  }
+
+  const reason = retire.parseReason(req.body);
+  const built = retire.buildRetireSql({ ids, externalIds });
+
+  // Look the batch up first: it is what separates "already retired" from "we have never held this
+  // job", and a caller that cannot tell those apart cannot tell a no-op from a broken integration.
+  const lookupParams = [];
+  const lookupWhere = [];
+  if (ids.length) { lookupParams.push(ids); lookupWhere.push(`id = ANY($${lookupParams.length}::bigint[])`); }
+  if (externalIds.length) { lookupParams.push(externalIds); lookupWhere.push(`external_id = ANY($${lookupParams.length}::text[])`); }
+  const { rows: existing } = await query(
+    `SELECT id, external_id, removed_at FROM jobs WHERE ${lookupWhere.join(' OR ')}`, lookupParams);
+
+  if (req.body && req.body.dryRun) {
+    const live = existing.filter((r) => !r.removed_at);
+    return res.json({
+      dryRun: true, requested: total, wouldRetire: live.length,
+      skipped: retire.classify({ ids, externalIds }, live, existing), reason,
+    });
+  }
+
+  built.params[built.params.length - 1] = reason;
+  const { rows: retired } = await query(built.sql, built.params);
+  const skipped = retire.classify({ ids, externalIds }, retired, existing);
+
+  logger.info({ requested: total, retired: retired.length, reason, by: req.tokenPayload && req.tokenPayload.sub },
+    'Jobs retired by automation');
+
+  res.json({
+    requested: total,
+    retired: retired.length,
+    retiredIds: retired.map((r) => Number(r.id)),
+    skipped,
+    reason,
+  });
 });
 
 router.get('/api/jobs/:id', async (req, res) => {
