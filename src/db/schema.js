@@ -127,6 +127,14 @@ async function migrate() {
     await exec('ALTER TABLE jobs ADD COLUMN IF NOT EXISTS random_rank DOUBLE PRECISION DEFAULT random()');
   }
 
+  // Why a job was retired, when something other than the absence counter retired it — today that
+  // is the apply automation reporting a posting it found gone (POST /api/jobs/retire). Removal is
+  // soft, so this is the only record of who removed a row and on what evidence; without it a
+  // wrongly-retired job looks identical to one the crawlers stopped seeing.
+  if (isPostgres) {
+    await exec('ALTER TABLE jobs ADD COLUMN IF NOT EXISTS removed_reason TEXT');
+  }
+
   // Dead-job pruning: records when each job's URL was last verified live. The worker
   // rotates through jobs least-recently-checked first; partial index keeps that scan cheap.
   if (isPostgres) {
