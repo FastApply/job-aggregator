@@ -96,6 +96,20 @@ async function main() {
   }
   setTimeout(runStaleJobCleanup, 5 * 60 * 1000);
 
+  // Search canary — src/tasks/search-canary.js. Asks the deployed public API for two-role
+  // queries and alerts to Telegram if either role is missing from the page. Every 6 hours,
+  // first run 3 minutes after boot. Cheap (6 requests) and the only thing that has ever
+  // caught the "multi-role search silently becomes role #1" bug in under a day.
+  async function runSearchCanaryLoop() {
+    try {
+      await require('./tasks/search-canary').runSearchCanary();
+    } catch (err) {
+      logger.error({ err: err.message }, 'search canary error');
+    }
+    setTimeout(runSearchCanaryLoop, 6 * 60 * 60 * 1000);
+  }
+  setTimeout(runSearchCanaryLoop, 3 * 60 * 1000);
+
   // Ship changed jobs into the search index. Driven by the index_dirty_at outbox column, so it
   // sees writes from every source including the laptop scripts. No-ops entirely when MEILI_HOST
   // is unset, so this is safe to ship before the index exists.
