@@ -216,12 +216,17 @@ const MULTI_ROLE_FETCH_CAP = 200;
 const MULTI_ROLE_MAX_DEPTH = MULTI_ROLE_FETCH_CAP;
 
 /**
- * Roles beyond this are dropped from a single request. The automation sends up to 22, and each
- * role is a sub-query the index has to run; the cap bounds the work one request can ask for.
- * Roles are kept in the order the caller listed them, so this truncates the tail rather than
- * sampling.
+ * Roles beyond this are dropped from a single request.
+ *
+ * Set to match the CALLER's own ceiling rather than to a round number: FastApply's
+ * broadenSearchKeywords caps its expansion at 24 roles, and it emits each original role
+ * followed by that role's broader variants — so the originals are spread through the list, not
+ * bunched at the front. A lower cap here would truncate the tail and silently drop whole user
+ * roles, which is the exact bug this change set exists to fix, reintroduced one layer down.
+ *
+ * The cost of the higher ceiling is paid back below by not requesting facets per sub-query.
  */
-const MAX_ROLES = 12;
+const MAX_ROLES = 24;
 
 /**
  * Interleave per-role result lists round-robin: role A's best hit, role B's best, role C's
@@ -293,8 +298,16 @@ function mergeFacets(results) {
 async function searchMultiRole(roles, base, { limit, offset, filters }) {
   const depth = offset + limit;
   if (depth > MULTI_ROLE_MAX_DEPTH) return null;
+  // No `facets` per sub-query. /api/facets serves the board's facet counts from its own
+  // zero-query search (loadFacets -> jobsSearch.facets), and the route reads only rows, total
+  // and totalIsCapped off this result — the facetDistribution a search computes is returned and
+  // never read by anybody. Asking 24 sub-queries for counts nothing consumes is what would make
+  // a wide role list expensive; skipping it keeps a multi-role request in the same cost class as
+  // the single faceted query it replaces. mergeFacets still merges whatever does come back, so
+  // a future reader gets correct numbers rather than the first role's.
+  const { facets: _facets, ...roleBase } = base;
   const queries = roles.map((role) => ({
-    ...base,
+    ...roleBase,
     q: role,
     limit: depth,
     offset: 0,
@@ -325,7 +338,7 @@ async function searchMultiRole(roles, base, { limit, offset, filters }) {
   const totalHits = results.reduce((n, r) => n + ((r && r.hits) || []).length, 0);
   if (totalHits === 0) {
     const loose = await meili.multiSearch(
-      roles.map((role) => ({ ...base, q: role, limit: depth, offset: 0, matchingStrategy: 'last' }))
+      roles.map((role) => ({ ...roleBase, q: role, limit: depth, offset: 0, matchingStrategy: 'last' }))
     );
     const looseHits = (loose || []).reduce((n, r) => n + ((r && r.hits) || []).length, 0);
     if (looseHits > 0) {
