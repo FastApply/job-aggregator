@@ -220,3 +220,15 @@ test('a /multi-search 404 uses the single-query path, not the Postgres fallback'
   assert.equal(calls.search.length, 1);
   assert.ok(res.rows.length > 0);
 });
+
+test('the cap matches the caller ceiling so no user role is truncated away', async () => {
+  // broadenSearchKeywords emits role1, role1-variants, role2, role2-variants, ... up to 24.
+  // A cap below that drops whole ORIGINAL roles from the tail — the bug, one layer down.
+  assert.equal(MAX_ROLES, 24);
+  const calls = stubIndex(CORPUS);
+  const roles = Array.from({ length: 24 }, (_, i) => `Project Manager`).map((r, i) => `${r} ${i}`);
+  await jobsSearch.search({ q: roles.join(','), limit: 10 });
+  assert.equal(calls.multiSearch[0].length, 24, 'every role the caller may send gets its own query');
+  assert.ok(calls.multiSearch[0].every((qy) => qy.facets === undefined),
+    'sub-queries must not pay for facet counts nothing reads');
+});
