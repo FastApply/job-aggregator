@@ -106,6 +106,25 @@ async function search(params) {
   return call('POST', `/indexes/${INDEX}/search`, params);
 }
 
+/**
+ * Run several searches against the index in ONE request.
+ *
+ * Exists because a Meilisearch query is a single bag of words with a single matching strategy,
+ * so it cannot express "role A OR role B" — the board's comma-separated `q` needs one query per
+ * role (see searchMultiRole in jobs-search.js). Issuing those as N sequential `search` calls
+ * would multiply the request's latency by N; /multi-search runs them together and returns
+ * `results` positionally, so a 3-role board search costs one round trip, not three.
+ *
+ * `queries` entries are ordinary search bodies; indexUid is filled in here so callers never
+ * have to know it.
+ */
+async function multiSearch(queries) {
+  if (!enabled || !queries || !queries.length) return null;
+  const body = { queries: queries.map((qy) => ({ indexUid: INDEX, ...qy })) };
+  const res = await call('POST', '/multi-search', body);
+  return (res && res.results) || null;
+}
+
 async function stats() {
   if (!enabled) return null;
   return call('GET', `/indexes/${INDEX}/stats`);
@@ -173,5 +192,5 @@ function toDocument(row) {
 
 module.exports = {
   enabled, INDEX, HOST,
-  health, ensureIndex, addDocuments, deleteDocuments, search, stats, toDocument, call,
+  health, ensureIndex, addDocuments, deleteDocuments, search, multiSearch, stats, toDocument, call,
 };

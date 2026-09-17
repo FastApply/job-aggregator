@@ -170,10 +170,178 @@ function buildFilter(filters = {}) {
   return { filter: parts.length ? parts.join(' AND ') : undefined };
 }
 
-/** Build the free-text query. Roles are comma-separated; location is a filter, not a term. */
+/**
+ * The roles the caller asked for. `q` is comma-separated and each entry is one role the user
+ * would accept; location is a filter, not a term.
+ */
+function splitRoles(filters) {
+  return filters.q ? String(filters.q).split(',').map((r) => r.trim()).filter(Boolean) : [];
+}
+
+/**
+ * Build the free-text query for a SINGLE-role (or no-role) search.
+ *
+ * Multi-role searches do NOT come through here — see searchMultiRole. This used to join every
+ * role with a space and hand the result to one Meilisearch query, which silently destroyed the
+ * OR: `matchingStrategy: 'last'` drops query words from the END until it has enough hits, so
+ * "Industrial Security,Physical Security,Project Manager" became the word bag
+ * "Industrial Security Physical Security Project Manager", the tail was dropped, and only the
+ * FIRST role was ever really searched. Measured on the live board 2026-09-17: that exact query
+ * returned 137 rows with ZERO "security" titles among them, while "Physical Security" alone
+ * returned the 2 matching jobs. Whichever role was listed first owned the entire page; roles
+ * 2..N contributed nothing, at any offset. 266 of 317 active FastApply automations (84%) are
+ * multi-role, so most users' second and third target roles had never been searched at all.
+ */
 function buildQuery(filters) {
-  const roles = filters.q ? String(filters.q).split(',').map((r) => r.trim()).filter(Boolean) : [];
-  return roles.join(' ').trim();
+  return splitRoles(filters).join(' ').trim();
+}
+
+/**
+ * How many results to pull per role before merging. A role can be starved by the merge (its
+ * hits dedupe away against an earlier role, or it simply has fewer than its share), so each
+ * sub-query fetches the whole page depth rather than `limit / roleCount` — otherwise the last
+ * page of a paginated multi-role search comes back short.
+ */
+const MULTI_ROLE_FETCH_CAP = 200;
+
+/**
+ * How deep a multi-role search will paginate before handing the request back to the single-query
+ * path. The merge happens in memory over the hits actually fetched, so serving offset N needs
+ * N + limit rows from EVERY role; past this depth that stops being a reasonable amount of work
+ * to ask the index for. Beyond it the caller keeps the old single-query behaviour, which is
+ * imperfect but is exactly what production does today — a deep page must not come back EMPTY
+ * just because the merge could not reach it. At the board's 50/page that is the first 4 pages,
+ * and the automation only ever reads page one.
+ */
+const MULTI_ROLE_MAX_DEPTH = MULTI_ROLE_FETCH_CAP;
+
+/**
+ * Roles beyond this are dropped from a single request. The automation sends up to 22, and each
+ * role is a sub-query the index has to run; the cap bounds the work one request can ask for.
+ * Roles are kept in the order the caller listed them, so this truncates the tail rather than
+ * sampling.
+ */
+const MAX_ROLES = 12;
+
+/**
+ * Interleave per-role result lists round-robin: role A's best hit, role B's best, role C's
+ * best, then each role's second, and so on.
+ *
+ * Round-robin is the half of this fix that the user actually sees. Concatenating instead would
+ * restore the old symptom by a different route: a role with 10,000 matches would fill the page
+ * and a role with 2 would never appear on it, even though both queries ran. Interleaving gives
+ * every role page presence proportional to its RANK within its own result set, never to the
+ * size of its corpus — so "Physical Security" (2 matches) lands on page one next to
+ * "Project Manager" (10,000).
+ *
+ * Deduped by document id: a job matching two roles is one job, and it keeps the position of
+ * the first role that claimed it.
+ */
+function interleaveByRole(perRole) {
+  const out = [];
+  const seen = new Set();
+  const depth = Math.max(0, ...perRole.map((hits) => hits.length));
+  for (let rank = 0; rank < depth; rank += 1) {
+    for (const hits of perRole) {
+      const hit = hits[rank];
+      if (!hit) continue;
+      const key = String(hit.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(hit);
+    }
+  }
+  return out;
+}
+
+/**
+ * Merge the facet counts of several sub-queries by summing each value.
+ *
+ * A job matching two roles is counted twice here. That is the same overcount the merged `total`
+ * carries and for the same reason: dedupe is only possible over the hits actually fetched, not
+ * over the whole result set. These are already `estimatedTotalHits`-class numbers, capped at
+ * COUNT_CAP, and they drive facet chips — not correctness.
+ */
+function mergeFacets(results) {
+  const merged = {};
+  let any = false;
+  for (const res of results) {
+    const dist = (res && res.facetDistribution) || null;
+    if (!dist) continue;
+    any = true;
+    for (const [facet, values] of Object.entries(dist)) {
+      merged[facet] = merged[facet] || {};
+      for (const [value, count] of Object.entries(values)) {
+        merged[facet][value] = (merged[facet][value] || 0) + count;
+      }
+    }
+  }
+  return any ? merged : null;
+}
+
+/**
+ * Multi-role search: one sub-query per role, merged round-robin.
+ *
+ * Every role gets `matchingStrategy: 'all'` — the SAME precision a single-role search already
+ * gets — because the whole reason the roles are separate queries is that each one is its own
+ * AND-of-words, exactly like the Postgres path's `(a & b) | (c & d)`. The old shared-bag query
+ * could not express that and was strictly looser AND strictly narrower at once: looser within
+ * the surviving role, and narrower in that the other roles vanished.
+ *
+ * Returns null when the index has no multi-search (or it failed), so the caller falls back.
+ */
+async function searchMultiRole(roles, base, { limit, offset, filters }) {
+  const depth = offset + limit;
+  if (depth > MULTI_ROLE_MAX_DEPTH) return null;
+  const queries = roles.map((role) => ({
+    ...base,
+    q: role,
+    limit: depth,
+    offset: 0,
+    matchingStrategy: 'all',
+  }));
+
+  let results = await meili.multiSearch(queries);
+  if (!results) return null;
+
+  // Same recall safety net the single-role path has, applied to the search as a WHOLE rather
+  // than per role. Widening one role while others have real hits would spend page slots on
+  // loosely-related jobs ("Technical Writer" -> "Technical Recruiter") next to exact matches,
+  // which is the precision complaint this file already fixed once. Only a search that found
+  // nothing at all is worth trading precision for, because an empty board is worse than a
+  // loose one.
+  const totalHits = results.reduce((n, r) => n + ((r && r.hits) || []).length, 0);
+  if (totalHits === 0) {
+    const loose = await meili.multiSearch(
+      roles.map((role) => ({ ...base, q: role, limit: depth, offset: 0, matchingStrategy: 'last' }))
+    );
+    const looseHits = (loose || []).reduce((n, r) => n + ((r && r.hits) || []).length, 0);
+    if (looseHits > 0) {
+      logger.info({
+        roles: roles.length,
+        q: roles.join(',').slice(0, 60),
+        widenedTo: looseHits,
+        filters: summariseFilters(filters),
+      }, 'Meili: no exact-match results for any role, widened the query');
+      results = loose;
+    }
+  }
+
+  const merged = interleaveByRole(results.map((r) => (r && r.hits) || []));
+
+  // Sum, not max: the roles are an OR, so a board that has 2 "Physical Security" jobs and 397
+  // "Project Manager" jobs has ~399 for the pair. Overlapping jobs are counted twice — see
+  // mergeFacets — and the figure is capped by the caller like every other total here.
+  const total = results.reduce(
+    (n, r) => n + ((r && (r.estimatedTotalHits ?? r.totalHits)) || 0),
+    0
+  );
+
+  return {
+    hits: merged.slice(offset, offset + limit),
+    total,
+    facetDistribution: mergeFacets(results),
+  };
 }
 
 /**
@@ -200,14 +368,14 @@ async function search(filters = {}) {
   const q = buildQuery(filters);
   const facets = ['employment_type', 'experience_level', 'ats', 'workplace_type', 'role_category'];
 
-  // How many distinct roles the caller asked for. The SQL path AND's the words inside one role
-  // but OR's the roles against each other, so `q` = "developer,designer" must match either. A
-  // single Meilisearch query cannot express that OR, and 'all' would demand both words at once —
-  // turning a two-role search into a search for jobs that are somehow both. So 'all' is applied
-  // only to single-role queries; multi-role keeps the permissive default, which is no worse than
-  // today's behaviour and is the case the SQL path already disagreed with.
-  const roleCount = filters.q ? String(filters.q).split(',').map((r) => r.trim()).filter(Boolean).length : 0;
-  const strict = roleCount === 1;
+  // The SQL path AND's the words inside one role but OR's the roles against each other, so
+  // `q` = "developer,designer" must match either. A single Meilisearch query cannot express
+  // that OR — 'all' would demand every word at once (a job somehow both), and 'last' drops the
+  // tail, which silently reduced the search to role #1. So multi-role runs one query per role
+  // and merges (searchMultiRole); only a single-role search is one query, where 'all' is both
+  // expressible and correct.
+  const roles = splitRoles(filters).slice(0, MAX_ROLES);
+  const strict = roles.length === 1;
 
   // Freshness ordering is applied ONLY when there is no search text.
   //
@@ -225,11 +393,22 @@ async function search(filters = {}) {
   };
 
   try {
+    // Multi-role: one sub-query per role, merged round-robin. Falls through to the single-query
+    // path when the index has no /multi-search, so an older Meilisearch degrades to the old
+    // behaviour rather than to no results.
+    let res = null;
+    if (roles.length > 1) {
+      // `base` carries the caller's page window; each sub-query needs its own, so strip it here
+      // rather than letting searchMultiRole override two keys it did not set.
+      const { limit: _l, offset: _o, ...roleBase } = base;
+      res = await searchMultiRole(roles, roleBase, { limit, offset, filters });
+    }
+
     // matchingStrategy defaults to 'last', which DROPS query words from the end until it finds
     // enough results — so "senior technical writer" happily returned "Senior Technical Program
     // Manager", and with title/company_name/department/location all searchable it could satisfy
     // "senior" from the title and "technical" from the department. 'all' requires every term.
-    let res = await meili.search({ ...base, q, matchingStrategy: strict ? 'all' : 'last' });
+    if (!res) res = await meili.search({ ...base, q, matchingStrategy: strict ? 'all' : 'last' });
 
     // Requiring every term can legitimately return nothing on a long or unusual query, and an
     // empty board is worse than a loose one. Fall back to the permissive strategy only then, so
@@ -315,7 +494,7 @@ async function search(filters = {}) {
 
     // estimatedTotalHits is bounded by the index's maxTotalHits (10000), matching the cap the
     // SQL path applies — so pagination behaves identically either way.
-    const total = res.estimatedTotalHits ?? res.totalHits ?? rows.length;
+    const total = res.total ?? res.estimatedTotalHits ?? res.totalHits ?? rows.length;
     return {
       rows,
       total,
@@ -374,4 +553,7 @@ async function facets() {
   }
 }
 
-module.exports = { search, facets, buildFilter, buildQuery, COUNT_CAP };
+module.exports = {
+  search, facets, buildFilter, buildQuery, splitRoles, interleaveByRole, mergeFacets,
+  MAX_ROLES, COUNT_CAP,
+};
