@@ -1,6 +1,7 @@
 const { query, transaction, isPostgres } = require('../connection');
 const logger = require('../../logger');
 const { aliasGroup, isShortAlias } = require('../../utils/location-aliases');
+const { resolveCountry, norm, AMBIGUOUS_COUNTRY_NAMES } = require('../../utils/location-countries');
 const { normalizeEmploymentType, normalizeWorkplaceType } = require('../../utils/extract');
 const { parsePostedWindow } = require('../../utils/posted-window');
 
@@ -168,30 +169,140 @@ function buildFilters(filters = {}) {
     }
   }
 
-  // Location — multi-value free-text match (OR'd), with country-alias expansion so e.g.
-  // "UAE" also matches jobs stored as "United Arab Emirates" (and USA/US<->United States,
-  // UK<->United Kingdom, ...). Long unambiguous aliases use a substring match; short ones
-  // (us/uk/usa/uae) use a word-boundary regex so "us" doesn't match "Houston".
+  // Location — multi-value free-text match, with country-alias expansion so e.g. "UAE" also
+  // matches jobs stored as "United Arab Emirates" (and USA/US<->United States, UK<->United
+  // Kingdom, ...). Long unambiguous aliases use a substring match; short ones (us/uk/usa/uae)
+  // use a word-boundary regex so "us" doesn't match "Houston".
+  //
+  // TWO LEVELS of grouping — see buildFilter in jobs-search.js for the full rationale, this
+  // mirrors it exactly. TOP LEVEL: each element the caller actually sent (an array entry from
+  // repeated ?location= keys, or the single string given) is independent and never merges with
+  // another — this is what keeps a genuine multi-select (the AI Job Matcher's automation.cities,
+  // which documents two separate entries as meaning EITHER) meaning OR. WITHIN one element: a
+  // comma-separated string reads left to right as PLACE terms followed by the COUNTRY that
+  // closes them, so "Lagos, Nigeria, California" is "(Lagos AND Nigeria) OR California", not
+  // "(Lagos OR California) AND Nigeria" (which is what a flat two-bucket version of this fix
+  // produced — reproduced and fixed 2026-09-19, then reproduced again and fixed properly
+  // 2026-09-21 once a query had more than one place term).
+  //
+  // Classification uses resolveCountry, which has full ISO coverage, rather than aliasGroup
+  // below, which only expands the 5 hand-curated ambiguous-abbreviation groups (US/UK/UAE/
+  // Netherlands/Germany) — aliasGroup still decides what the generated clause looks like, this
+  // only decides which bucket it lands in. Without it "Nigeria" (no alias group of its own)
+  // would never be read as a country here.
+  //
+  // A term can also arrive as "place|country" (pipe) — see jobs-search.js buildFilter for why:
+  // the auto-apply launcher sends a chosen City/Province and Country this way specifically so
+  // this code never has to guess which half is the country from content alone (it can't:
+  // "Georgia" resolves as a country in its own right, so a flattened "Georgia, United States"
+  // would otherwise read as two alternative countries instead of one state within one country).
+  // A pipe pair is always its own closed group, never merged with a place term accumulated
+  // earlier in the same element.
   {
-    const locs = toList(filters.location);
-    if (locs.length > 0) {
-      const or = [];
-      for (const l of locs) {
-        const raw = String(l).trim().toLowerCase();
-        const group = aliasGroup(l);
-        // Match the term itself plus every alias in its country group (deduped).
-        const terms = group ? Array.from(new Set([raw, ...group])) : [l];
-        for (const term of terms) {
-          // Word-boundary only for KNOWN short aliases (us/uk/usa/uae) so they match as whole
-          // words; everything else (incl. arbitrary short input like "NY") stays substring.
-          if (isPostgres && isShortAlias(term) && aliasGroup(term)) {
-            or.push("j.location ~* ('\\y' || ? || '\\y')"); params.push(String(term).toLowerCase());
+    const clausesForTerm = (term) => {
+      const raw = String(term).trim().toLowerCase();
+      const group = aliasGroup(term);
+      // Match the term itself plus every alias in its country group (deduped).
+      const variants = group ? Array.from(new Set([raw, ...group])) : [term];
+      return variants.map((v) => (
+        // Word-boundary only for KNOWN short aliases (us/uk/usa/uae) so they match as whole
+        // words; everything else (incl. arbitrary short input like "NY") stays substring.
+        isPostgres && isShortAlias(v) && aliasGroup(v)
+          ? { sql: "j.location ~* ('\\y' || ? || '\\y')", param: String(v).toLowerCase() }
+          : { sql: 'j.location ILIKE ?', param: `%${v}%` }
+      ));
+    };
+
+    // One closed group -> its SQL piece plus the param entries it needs, kept together so the
+    // final param list can never drift out of step with the `?` placeholders in the SQL text.
+    const groupSql = (places, countryEntries) => {
+      const placeEntries = places.flatMap(clausesForTerm);
+      const hasPlace = placeEntries.length > 0;
+      const hasCountry = !!(countryEntries && countryEntries.length);
+      if (hasPlace && hasCountry) {
+        return {
+          sql: `((${placeEntries.map((e) => e.sql).join(' OR ')}) AND (${countryEntries.map((e) => e.sql).join(' OR ')}))`,
+          entries: [...placeEntries, ...countryEntries],
+        };
+      }
+      if (hasPlace) return { sql: `(${placeEntries.map((e) => e.sql).join(' OR ')})`, entries: placeEntries };
+      return { sql: `(${countryEntries.map((e) => e.sql).join(' OR ')})`, entries: countryEntries };
+    };
+
+    // Read one caller-supplied element into its closed groups. A country can close a run of
+    // places from EITHER side, not just the trailing one — see the matching comment in
+    // jobs-search.js buildFilter for the full rationale and the "United States, Nashville, New
+    // Orleans" real-world case (32,498 search-demand searches, 2026-09-13) this handles. A
+    // country seen with nothing accumulated yet is held as `pendingCountry` rather than closed
+    // immediately, in case places follow it; it stands alone once something proves it isn't
+    // qualifying anything (another country arriving first, or the element ending on it).
+    const groupsForElement = (raw) => {
+      const groups = [];
+      let openPlaces = [];
+      let openAmbiguous = []; // entries for e.g. "Georgia" while its run is still undecided
+      let pendingCountry = null; // { entries, isUS }
+      const flushPending = () => {
+        if (pendingCountry) { groups.push(groupSql([], pendingCountry.entries)); pendingCountry = null; }
+      };
+      // Closes the current run. `country` is null for an unresolved (trailing) close. An
+      // ambiguous term's own country reading is only dropped when the run closes on United
+      // States specifically — see the matching comment in jobs-search.js buildFilter for why
+      // any other closing country keeps both readings instead of silently discarding one.
+      const closeRun = (country) => {
+        if (!country || !country.isUS) for (const amb of openAmbiguous) groups.push(groupSql([], amb));
+        if (openPlaces.length || country) groups.push(groupSql(openPlaces, country ? country.entries : null));
+        openPlaces = [];
+        openAmbiguous = [];
+      };
+
+      for (const part of String(raw).split(',').map((s) => s.trim()).filter(Boolean)) {
+        const pipeParts = part.includes('|') ? part.split('|').map((s) => s.trim()).filter(Boolean) : null;
+        if (pipeParts && pipeParts.length >= 2 && resolveCountry(pipeParts[pipeParts.length - 1])) {
+          // A pipe pair is always its own group — flush whatever came before (unresolved)
+          // instead of merging into or being merged with it.
+          flushPending();
+          closeRun(null);
+          groups.push(groupSql(pipeParts.slice(0, -1), clausesForTerm(pipeParts[pipeParts.length - 1])));
+          continue;
+        }
+        // If it had a pipe but the trailing segment isn't a recognised country, fall through
+        // and resolve the original text as one ordinary term instead of silently dropping half.
+        const country = resolveCountry(part);
+        if (country && AMBIGUOUS_COUNTRY_NAMES.has(norm(part))) {
+          // Hold both readings open rather than committing: "georgia" is carried as an ordinary
+          // place term for whatever run it sits in, and its own country reading waits in
+          // `openAmbiguous` until closeRun() decides whether United States settled it.
+          openAmbiguous.push(clausesForTerm(part));
+          openPlaces.push(part);
+        } else if (country) {
+          const entry = { entries: clausesForTerm(part), isUS: country.code === 'us' };
+          if (openPlaces.length || openAmbiguous.length) {
+            // Closes with the NEAREST country, not an older pending one. A pending country this
+            // run passed without using stands alone instead of vanishing.
+            flushPending();
+            closeRun(entry);
           } else {
-            or.push('j.location ILIKE ?'); params.push(`%${term}%`);
+            // Nothing accumulated yet — hold it in case it qualifies what comes next. An
+            // earlier still-pending country stands alone now: two countries back to back are
+            // alternatives, neither qualifies the other.
+            flushPending();
+            pendingCountry = entry;
           }
+        } else {
+          openPlaces.push(part);
         }
       }
-      clauses.push('(' + or.join(' OR ') + ')');
+      if (openPlaces.length || openAmbiguous.length) closeRun(pendingCountry);
+      else flushPending();
+      return groups;
+    };
+
+    const rawLocations = filters.location == null ? []
+      : Array.isArray(filters.location) ? filters.location : [filters.location];
+    const groups = rawLocations.flatMap((raw) => (String(raw).trim() ? groupsForElement(raw) : []));
+    if (groups.length > 0) {
+      clauses.push(`(${groups.map((g) => g.sql).join(' OR ')})`);
+      for (const g of groups) for (const e of g.entries) params.push(e.param);
     }
   }
 
