@@ -57,6 +57,51 @@ const US_STATES = new Set(['al','ak','az','ar','ca','co','ct','de','fl','ga','hi
   'ia','ks','ky','la','me','md','ma','mi','mn','ms','mo','mt','ne','nv','nh','nj','nm','ny','nc',
   'nd','oh','ok','or','pa','ri','sc','sd','tn','tx','ut','vt','va','wa','wv','wi','wy','dc','pr','vi','gu']);
 
+// Country names that collide with a real, findable city elsewhere, WHERE the country's own code
+// would swallow the city if it closed a search the way an unambiguous country safely does.
+// Checked individually, 2026-09-22 unless noted, against real search-demand data
+// (search-demand-2026-09-13.csv) and a global city database (country-state-city, 148,038 cities):
+//   - "georgia": checked programmatically against all 50 US state names — the only exact
+//     collision.
+//   - "angola": found live in search-demand data — "Fort Wayne, Angola, Lima" (626 searches)
+//     paired Fort Wayne, Indiana with the country Angola, because Angola, Indiana is a real US
+//     city with the same name.
+//   - "macedonia": collides with Macedonia, Ohio and Macedônia, Brazil (country-state-city). No
+//     legitimate use is lost by adding it — every real search-demand row pairing a city with the
+//     country ("Skopje,North Macedonia", "Skopje, North Macedonia") spells out "North Macedonia",
+//     which is the TABLE's own primary name and a completely separate LOOKUP key from the
+//     "macedonia" alias, so it is untouched by this set either way.
+//   - "liberia": collides with Liberia, Costa Rica (country-state-city) — a real town sharing
+//     nothing with the country's own territory, same shape as Angola/Indiana. No search-demand
+//     rows mention Liberia at all (0 hits), so there is no observed cost either way; added on the
+//     strength of the collision alone, same bar Georgia and Angola were held to before any
+//     search-demand evidence existed for them.
+//
+// NOT a general "any country name that is also a city name anywhere" list, and deliberately so —
+// the same cross-reference turns up 76 such collisions, and almost all of them must NOT be added
+// here. Most are the opposite of Georgia/Angola/Macedonia/Liberia: e.g. "Mexico" collides with
+// Mexico, Maine, but Mexico the country is searched via its OWN cities constantly ("Cancun,
+// Mexico") — adding it here would stop that closing normally and turn "Cancun, Mexico" into
+// "anywhere in Mexico", destroying the one precise, extremely common reading to guard against a
+// rare one.
+//
+// "palestine" was checked and REJECTED on exactly this ground: search-demand data has two real
+// rows for "ramallah,palestine" / "ramallah, palestine" — Ramallah is Palestine's own
+// administrative capital, so this is the same live "own city + own bare name" pairing that sinks
+// Mexico, not the "unrelated town elsewhere" shape that clears Georgia/Angola/Liberia. Adding it
+// would turn a confirmed real search into "anywhere in Palestine". Do not add it without new
+// evidence that changes this.
+//
+// The test is per-name: does the country's own code overlap what a searcher pairing it with an
+// adjacent place actually means? Only add a name here once that has been checked, the way every
+// entry above was — resolving a technical collision is not sufficient on its own.
+//
+// resolveCountry() still resolves every one of these on its own (a bare ambiguous name stays the
+// deliberately ambiguous answer the header note describes); this set is only for a caller that
+// combines a resolved country with an ADJACENT term (buildFilter's location grouping) to opt out
+// of doing that for a name this unreliable.
+const AMBIGUOUS_COUNTRY_NAMES = new Set(['georgia', 'angola', 'macedonia', 'liberia']);
+
 /** code -> primary name */
 const NAME = new Map();
 /** normalised name or alias -> code */
@@ -179,9 +224,23 @@ const US_TOWN_ALIASES = new Set(['nederland', 'holland']);
 /**
  * Resolve a user-supplied location term to a country.
  * Returns { code, name } for a country, or null for a city/region/anything else.
+ *
+ * A BARE two-letter term never resolves if it is also a US state code. LOOKUP carries every
+ * ISO code as its own key (line ~74), which is right for a code read off the end of a full
+ * address ("Toronto, ON, CA") but wrong for an atomic term with no surrounding context: 13 of
+ * the 50 US state abbreviations collide with a real country — CA/Canada, AZ/Azerbaijan,
+ * GA/Gabon, VA/Vatican City, MT/Malta, IN/India, LA/Laos, MA/Morocco, NC/New Caledonia,
+ * DE/Germany, CO/Colombia, AR/Argentina, AL/Albania — found live 2026-09-21 in search-demand
+ * data: "Oakland, CA, Berkeley, CA, San Francisco" resolved CA as Canada, which then filtered
+ * OUT the real Oakland/Berkeley results it was AND'd against (see buildFilter). Same principle
+ * as the trailing-code veto in countriesFromLocation below, simplified: that one has a
+ * multi-segment string to look for repetition in ("GB, GB" is a country, a lone "GA" is not);
+ * a single bare term has no such context, so — same as the header note's own rule for
+ * ambiguous-and-unrepeated cases — it emits nothing rather than guess.
  */
 function resolveCountry(term) {
   const n = norm(term);
+  if (n.length === 2 && US_STATES.has(n)) return null;
   const code = LOOKUP.get(n) || LOOKUP.get(n.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim());
   return code ? { code, name: NAME.get(code) } : null;
 }
@@ -251,7 +310,7 @@ function countriesFromLocation(text) {
   return [...found];
 }
 
-module.exports = { resolveCountry, countriesFromLocation, NAME };
+module.exports = { resolveCountry, countriesFromLocation, NAME, AMBIGUOUS_COUNTRY_NAMES };
 
 /**
  * Split a stored location into filterable tokens, so the query side can use an exact filter
