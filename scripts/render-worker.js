@@ -41,13 +41,18 @@ let shuttingDown = false;
 function startCrawler() {
   if (shuttingDown) return;
   child = fork(path.join(__dirname, 'crawl-companies-local.js'), [], {
-    // Cap the child heap below the ~258MB Node auto-picks on the 512MB Starter so a runaway
-    // tenant fails with a clean V8 error + restart rather than a container SIGKILL. The REAL
-    // fix is low concurrency/batch: the OOM was 4-way concurrency crawling 500-600-posting
-    // Workday tenants (each posting carries full description HTML) — several 10MB job arrays
-    // in flight at once. CONCURRENCY 2 + BATCH 8 keeps at most ~2 tenants' jobs resident and
-    // GCs between companies. Override via Render env if you later move to a bigger instance.
-    execArgv: ['--max-old-space-size=224'],
+    // Cap the child heap below what the container can give it, so a runaway tenant fails with a
+    // clean V8 error + restart rather than a container SIGKILL. The REAL fix is low
+    // concurrency/batch: the OOM was 4-way concurrency crawling 500-600-posting Workday tenants
+    // (each posting carries full description HTML) — several 10MB job arrays in flight at once.
+    // CONCURRENCY 2 + BATCH 8 keeps at most ~2 tenants' jobs resident and GCs between companies.
+    //
+    // 224 was sized for the 512MB Starter, where the parent's own maintenance loops left little
+    // room. It does not follow the instance: measured 2026-09-22 the worker sat at 427MB of 512
+    // and still SIGKILLed ~8x/day, each crash dropping the boards that child had in flight. On a
+    // larger instance the cap has to move with it or the extra memory is simply unused — hence
+    // CRAWL_HEAP_MB, set from Render env alongside the instance type (2GB box -> 1024).
+    execArgv: [`--max-old-space-size=${parseInt(process.env.CRAWL_HEAP_MB || '224', 10)}`],
     env: {
       ...process.env,
       ATS: CRAWL_ATS,
