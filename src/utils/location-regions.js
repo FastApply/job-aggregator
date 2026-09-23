@@ -39,6 +39,11 @@ const SPELLING = {
   nihon: 'japan',
   holland: 'netherlands',
   'the netherlands': 'netherlands',
+  // Offered as their own options by FastApply's location pickers, which save the name as picked.
+  'bosna i hercegovina': 'bosnia and herzegovina',
+  shqiperi: 'albania',
+  cameroun: 'cameroon',
+  mocambique: 'mozambique',
   // Straight misspellings observed in search_demand.
   slowaki: 'slovakia',
   slowakia: 'slovakia',
