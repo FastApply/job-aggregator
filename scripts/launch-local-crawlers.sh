@@ -31,7 +31,6 @@ NVM_BIN="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -
 export PATH
 
 command -v node >/dev/null 2>&1 || { echo "[$(date)] FATAL: node not on PATH ($PATH)"; exit 1; }
-command -v heroku >/dev/null 2>&1 || { echo "[$(date)] FATAL: heroku CLI not on PATH ($PATH)"; exit 1; }
 
 # Fetching the URL needs the network, and at login Wi-Fi may not be associated yet — a single
 # attempt ~2 minutes after boot is a coin flip. Retry, and print what actually failed.
@@ -45,38 +44,24 @@ command -v heroku >/dev/null 2>&1 || { echo "[$(date)] FATAL: heroku CLI not on 
 # So the CLI is no longer the only source: the last known-good URL is cached to disk on every
 # success and used when the CLI cannot answer. A rotated password makes the cached URL stale,
 # which the crawlers report as an auth error — a loud, specific failure, unlike a silent no-start.
+#
+# 2026-09-25: production moved off Heroku to the VPS Postgres (deploy/coolify/README.md). The cache
+# file is now the ONLY source: it holds the VPS URL via the co.fastapply.db-tunnel LaunchAgent
+# (127.0.0.1:15432). Asking `heroku config:get` here would overwrite it with the retired Heroku
+# database and silently send every script that reads this file back to it.
 CACHE="$HOME/.fastapply-database-url"
 DATABASE_URL=""
-err_file="$(mktemp -t crawl-launch)"
-for attempt in 1 2 3 4 5 6; do
-  out="$(heroku config:get DATABASE_URL -a fastapply-board 2>"$err_file")"
-  case "$out" in
-    postgres*) DATABASE_URL="$out"; break ;;
-    *) echo "[$(date)] DATABASE_URL attempt $attempt/6 failed: $(tr '\n' ' ' <"$err_file" | sed 's/  */ /g' | cut -c1-160)"
-       # An auth failure will not heal on its own — stop burning 20s sleeps and go to the cache.
-       if grep -qiE '401|unauthorized|not logged in|Press any key' "$err_file"; then
-         echo "[$(date)] heroku CLI is not authenticated (run: heroku login) — using cached URL"
-         break
-       fi
-       sleep 20 ;;
-  esac
-done
-rm -f "$err_file"
-
-if [ -n "$DATABASE_URL" ]; then
-  # Refresh the cache, readable only by this user — it is a live database credential.
-  ( umask 077; printf '%s\n' "$DATABASE_URL" > "$CACHE" )
-elif [ -r "$CACHE" ]; then
+if [ -r "$CACHE" ]; then
   DATABASE_URL="$(cat "$CACHE")"
   case "$DATABASE_URL" in
-    postgres*) echo "[$(date)] using cached DATABASE_URL from $CACHE" ;;
+    postgres*) echo "[$(date)] using DATABASE_URL from $CACHE" ;;
     *) DATABASE_URL="" ;;
   esac
 fi
 
 export DATABASE_URL
 export NODE_ENV=production
-[ -z "$DATABASE_URL" ] && { echo "[$(date)] FATAL: no DATABASE_URL (CLI failed and no usable cache at $CACHE)"; exit 1; }
+[ -z "$DATABASE_URL" ] && { echo "[$(date)] FATAL: no usable DATABASE_URL in $CACHE"; exit 1; }
 echo "[$(date)] DATABASE_URL resolved; launching fleet"
 
 LOG=/tmp
