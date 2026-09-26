@@ -230,6 +230,15 @@ function nativeId(job, ats) {
   return m ? m[1] : fallback;
 }
 
+// These never heal, so retrying them each cycle only burns requests against the API the crawler
+// also needs (~900 per 3h on 2026-09-26, for ~490 postings). Probed live:
+//   400     company renamed/migrated: "companyIdentifier (UnitedInfrastructure) does not match
+//           companyIdentifier (TBD20260910UnitedInfrastructure) from publication"
+//   401/403 the company closed its public API outright (CHECK24: 401 even on its postings list)
+//   404/410 posting removed
+// 429, 5xx and timeouts stay retryable.
+const SR_PERMANENT_STATUS = new Set([400, 401, 403, 404, 410]);
+
 async function fetchSmartRecruitersDescription(job) {
   const postingId = nativeId(job, 'smartrecruiters');
   const res = await fetch(
@@ -237,6 +246,10 @@ async function fetchSmartRecruitersDescription(job) {
     { signal: AbortSignal.timeout(10000) }
   );
   if (!res.ok) {
+    if (SR_PERMANENT_STATUS.has(res.status)) {
+      logger.warn({ jobId: job.id, slug: job.ats_slug, status: res.status }, 'SmartRecruiters API: permanent failure, not retrying');
+      return 'SKIP';
+    }
     logger.warn({ jobId: job.id, slug: job.ats_slug, status: res.status }, 'SmartRecruiters API: non-200');
     return null;
   }
@@ -264,7 +277,13 @@ async function fetchBambooHRDescription(job) {
     `https://${job.ats_slug}.bamboohr.com/careers/${jobId}/detail`,
     { signal: AbortSignal.timeout(10000) }
   );
+  if (res.status === 404 || res.status === 410) return 'SKIP';
   if (!res.ok) return null;
+  // A tenant that turned off its careers page (or left BambooHR) answers 200 with HTML: fetch
+  // follows the redirect to its login page or to bamboohr.com. Parsing that as JSON threw, the row
+  // stayed NULL, and the same jobs were retried every cycle forever (skylum, richtech, mybambu,
+  // doc: 12-13 times each in 3h on 2026-09-26). Non-OK statuses above still retry.
+  if (!/json/i.test(res.headers.get('content-type') || '')) return 'SKIP';
   const data = await res.json();
   return data?.result?.jobOpening?.description || null;
 }
