@@ -46,6 +46,33 @@ test('SmartRecruiters 200 with sections still returns the description', async ()
   assert.equal(await fetchDescription(sr), '<p>Build roads</p>');
 });
 
+function captureUrl() {
+  const seen = [];
+  global.fetch = async (url) => {
+    seen.push(String(url));
+    return new Response(JSON.stringify({ jobAd: { sections: { a: { text: '<p>ok</p>' } } } }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  return seen;
+}
+
+test('a one-click link asks for the real company and the publication uuid', async () => {
+  const seen = captureUrl();
+  const job = {
+    id: 3, ats: 'smartrecruiters', ats_slug: 'oneclick-ui', external_id: 'smartrecruiters_x',
+    url: 'https://jobs.smartrecruiters.com/oneclick-ui/company/Dexterra/publication/b4d1fdba-17ed-4fba-8559-3a810e0cf49c',
+  };
+  assert.equal(await fetchDescription(job), '<p>ok</p>');
+  assert.equal(seen[0], 'https://api.smartrecruiters.com/v1/companies/Dexterra/postings/b4d1fdba-17ed-4fba-8559-3a810e0cf49c');
+});
+
+test('an ordinary posting link is unchanged: stored slug and numeric id', async () => {
+  const seen = captureUrl();
+  await fetchDescription(sr);
+  assert.equal(seen[0], 'https://api.smartrecruiters.com/v1/companies/UnitedInfrastructure/postings/744000117289907');
+});
+
 test('BambooHR careers page turned off (200 HTML after redirect) is permanent', async () => {
   respond(200, '<!DOCTYPE html><title>Login – Skylum</title>', 'text/html; charset=UTF-8');
   assert.equal(await fetchDescription(bamboo), 'SKIP');
