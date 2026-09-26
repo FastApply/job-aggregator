@@ -199,10 +199,20 @@ function nativeId(job, ats) {
 // 429, 5xx and timeouts stay retryable.
 const SR_PERMANENT_STATUS = new Set([400, 401, 403, 404, 410]);
 
+// SmartRecruiters' "one-click" apply links carry the real employer and the posting's publication
+// uuid in the path: jobs.smartrecruiters.com/oneclick-ui/company/{Company}/publication/{uuid}.
+// Those jobs were stored under a company whose slug is literally "oneclick-ui", which is not a
+// SmartRecruiters company, so the postings endpoint answered 200 with an empty list and the rows
+// were retried forever. The API accepts the uuid as the posting id (probed 2026-09-26: Dexterra,
+// Medfar, VeoliaEnvironnementSA, Wabtec all 200).
+const SR_ONECLICK_RE = /\/oneclick-ui\/company\/([^/?#]+)\/publication\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
 async function fetchSmartRecruitersDescription(job) {
-  const postingId = nativeId(job, 'smartrecruiters');
+  const oneclick = (job.url || '').match(SR_ONECLICK_RE);
+  const company = oneclick ? decodeURIComponent(oneclick[1]) : job.ats_slug;
+  const postingId = oneclick ? oneclick[2] : nativeId(job, 'smartrecruiters');
   const res = await fetch(
-    `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(job.ats_slug)}/postings/${postingId}`,
+    `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(company)}/postings/${postingId}`,
     { signal: AbortSignal.timeout(10000) }
   );
   if (!res.ok) {
