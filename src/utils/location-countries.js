@@ -176,6 +176,91 @@ for (const [code, list] of ALIASES) {
 // countriesFromLocation.
 const US_TOWN_ALIASES = new Set(['nederland', 'holland']);
 
+// Full US state names, folded. See usStateReading.
+const US_STATE_NAMES = new Set(['alabama', 'alaska', 'arizona', 'arkansas', 'california',
+  'colorado', 'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois',
+  'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts',
+  'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada',
+  'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio',
+  'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota',
+  'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin',
+  'wyoming', 'district of columbia', 'puerto rico']);
+
+// "City, ST" where the city belongs to another country that uses the same two letters — as its
+// ISO code (Montreal, CA; Bogota, CO) or as its own state abbreviation (Perth, WA is Western
+// Australia; Chennai, TN is Tamil Nadu). Built from the cities that actually appear in the live
+// corpus next to each code (2% sample, 2026-09-26): every code there is overwhelmingly the US
+// state, and these are the exceptions it showed plus each country's other major cities.
+const FOREIGN_CITY_STATE = [
+  ['ca', 'ca', ['toronto', 'montreal', 'vancouver', 'ottawa', 'calgary', 'edmonton', 'winnipeg',
+    'mississauga', 'brampton', 'markham', 'oakville', 'burnaby', 'surrey', 'laval', 'gatineau',
+    'quebec', 'quebec city', 'halifax', 'victoria', 'saskatoon', 'regina', 'kitchener',
+    'waterloo', 'london', 'vaughan', 'richmond hill']],
+  ['in', 'in', ['bangalore', 'bengaluru', 'mumbai', 'navi mumbai', 'thane', 'pune', 'hyderabad',
+    'chennai', 'delhi', 'new delhi', 'gurgaon', 'gurugram', 'noida', 'greater noida', 'ghaziabad',
+    'faridabad', 'kolkata', 'ahmedabad', 'jaipur', 'kochi', 'cochin', 'coimbatore', 'trivandrum',
+    'thiruvananthapuram', 'chandigarh', 'mohali', 'indore', 'nagpur', 'lucknow', 'bhubaneswar',
+    'vadodara', 'surat', 'visakhapatnam', 'mysore', 'mysuru', 'mangalore', 'mangaluru',
+    'vijayawada', 'madurai', 'nashik', 'bhopal', 'patna', 'ranchi', 'guwahati', 'dehradun']],
+  ['tn', 'in', ['chennai', 'coimbatore', 'madurai', 'tiruchirappalli', 'trichy', 'hosur',
+    'vellore', 'tirunelveli', 'tiruppur', 'erode']],
+  ['tn', 'tn', ['tunis', 'sfax', 'sousse']],
+  ['or', 'in', ['bhubaneswar', 'cuttack', 'rourkela']],
+  ['wa', 'au', ['perth', 'fremantle', 'joondalup', 'bunbury', 'mandurah', 'kalgoorlie',
+    'karratha', 'port hedland', 'broome', 'geraldton']],
+  ['co', 'co', ['bogota', 'medellin', 'cali', 'barranquilla', 'cartagena', 'bucaramanga',
+    'pereira']],
+  ['ar', 'ar', ['buenos aires', 'tigre', 'cordoba', 'rosario', 'mendoza', 'la plata', 'caba']],
+  ['id', 'id', ['jakarta', 'south jakarta', 'bandung', 'surabaya', 'bali', 'denpasar', 'medan',
+    'yogyakarta', 'tangerang', 'bekasi', 'semarang', 'batam']],
+  ['mt', 'mt', ['sliema', 'valletta', 'st julians', 'saint julians', 'msida', 'birkirkara',
+    'gzira', 'san gwann', 'mosta', 'qormi', 'swieqi']],
+  ['mt', 'br', ['sorriso', 'cuiaba', 'rondonopolis', 'sinop']],
+  ['sc', 'br', ['florianopolis', 'joinville', 'blumenau', 'itajai', 'chapeco', 'criciuma']],
+  ['pa', 'br', ['belem']],
+  ['pa', 'pa', ['panama', 'panama city', 'ciudad de panama']],
+  ['ma', 'ma', ['casablanca', 'rabat', 'marrakech', 'tangier', 'tanger', 'fes', 'agadir']],
+  ['ma', 'br', ['sao luis']],
+  ['ms', 'br', ['campo grande', 'dourados']],
+  ['al', 'al', ['tirana', 'durres']],
+  ['al', 'br', ['maceio']],
+  ['il', 'il', ['tel aviv', 'tel aviv yafo', 'jerusalem', 'haifa', 'herzliya', 'petah tikva',
+    'petach tikva', 'raanana', "ra'anana", 'netanya', 'beer sheva', 'rehovot', 'yokneam',
+    'ramat gan', 'rosh haayin', 'hod hasharon']],
+  ['ga', 'ga', ['libreville']],
+  ['az', 'az', ['baku']],
+  ['md', 'md', ['chisinau']],
+  ['me', 'me', ['podgorica']],
+  ['mn', 'mn', ['ulaanbaatar', 'ulan bator']],
+  ['la', 'la', ['vientiane']],
+  ['ky', 'ky', ['george town', 'grand cayman']],
+  ['mo', 'mo', ['macau', 'macao']],
+  ['nc', 'nc', ['noumea']],
+  ['ne', 'ne', ['niamey']],
+  ['sd', 'sd', ['khartoum']],
+];
+const FOREIGN_BY_CITY_STATE = new Map();
+for (const [st, country, cities] of FOREIGN_CITY_STATE) {
+  for (const city of cities) FOREIGN_BY_CITY_STATE.set(`${city}|${st}`, country);
+}
+
+// DE is the one code the corpus does NOT read as the state by default: about half the bare
+// "City, DE" rows are German (Berlin, Hamburg, München, "Mehrere Standorte"). Delaware is small
+// enough to list instead.
+const DELAWARE_TOWNS = new Set(['wilmington', 'newark', 'dover', 'middletown', 'new castle',
+  'lewes', 'georgetown', 'milford', 'smyrna', 'seaford', 'bear', 'rehoboth beach', 'claymont',
+  'hockessin', 'harrington', 'laurel', 'selbyville', 'millsboro', 'delmar', 'camden', 'elsmere',
+  'glasgow', 'townsend', 'felton', 'frankford', 'milton', 'ocean view', 'bethany beach',
+  'greenwood', 'bridgeville', 'newport', 'clayton', 'delaware city', 'pike creek', 'christiana',
+  'north wilmington']);
+
+// "X, Georgia" is the US state unless X is one of the country's own cities.
+const GEORGIA_COUNTRY_CITIES = new Set(['tbilisi', 'batumi', 'kutaisi', 'rustavi', 'zugdidi',
+  'gori', 'telavi', 'poti']);
+
+// US territories carry their own ISO code as well as being part of the US.
+const US_TERRITORIES = new Set(['pr', 'vi', 'gu']);
+
 /**
  * Resolve a user-supplied location term to a country.
  * Returns { code, name } for a country, or null for a city/region/anything else.
@@ -248,7 +333,113 @@ function countriesFromLocation(text) {
     found.delete('nl');
   }
 
+  const state = usStateReading(segments, text);
+  if (state) {
+    // The state and the place in front of it are one address, so a country named inside either
+    // is a false reading ("New Mexico" -> Mexico, "Jersey City" -> Jersey, "Lebanon, Tennessee"
+    // -> Lebanon). Countries named EARLIER in the string are separate places and stay:
+    // "London, United Kingdom / Austin, Texas" and "Toronto, ON, Canada; Chicago, IL, USA" are
+    // both. A US state name earlier on ("Georgia, North Carolina, Tennessee") is not a country.
+    const earlier = namedCodes(state.earlierText);
+    return [...new Set([...[...found].filter((c) => earlier.has(c)), ...state.codes])];
+  }
+
   return [...found];
+}
+
+/** Country codes spelled out in `text` — the same word n-gram scan countriesFromLocation runs. */
+function namedCodes(text) {
+  const out = new Set();
+  const words = String(text).replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  for (let n = 1; n <= 4; n++) {
+    for (let i = 0; i + n <= words.length; i++) {
+      const key = words.slice(i, i + n).join(' ');
+      if (key.length <= 2) continue;
+      const code = LOOKUP.get(key);
+      if (code) out.add(code);
+    }
+  }
+  return out;
+}
+
+/**
+ * Does this location end in a US state? Returns { codes, cityIndex } or null.
+ *
+ * Without this, a US address that never spells out the country got NO country: "Austin, TX" and
+ * "Buffalo, New York" were invisible to location=United States. Measured 2026-09-26 on a 2%
+ * sample of live jobs, that was 38% of all US jobs (13% "City, ST", 9% "City, State"), and
+ * "Niagara Falls, United States" returned 2 of one employer's 106 Niagara Falls jobs.
+ *
+ * A state counts only at the END of the address: the last segment, or followed by nothing but
+ * US evidence ("United States", "USA", a ZIP). A state name in the middle ("Montana, Bulgaria",
+ * "Florida, Uruguay") is a place in some other country.
+ *
+ * Full names are read on their own. A two-letter code is read in the bare "City, ST" shape, or
+ * when a US country token follows it ("Jersey City, NJ, US"). It is NOT read mid-string
+ * otherwise, because "Chennai, TN, IN" is Tamil Nadu, India. In the bare shape the city settles
+ * the collisions: FOREIGN_BY_CITY_STATE for the known foreign cities, DELAWARE_TOWNS for DE.
+ *
+ * Case matters for the bare code, so it is read from the raw text: one source writes ISO country
+ * codes in lowercase ("Berlin, de", "Pune, in", "Montreal, ca", "Paris, fr", "Chicago, us") and in
+ * the live corpus every lowercase code that collides with a state was that country. A lowercase
+ * ISO code is the country; only an uppercase one, or one that is no country ("tx"), is a state.
+ * The case is only a signal when the rest of the text has capitals: an all-lowercase
+ * "san francisco, ca" says nothing either way and falls through to the city rules.
+ */
+function usStateReading(segments, rawText) {
+  // Several addresses joined by ";" or "|" share one comma segment: "Toronto, ON, Canada;
+  // Chicago, IL, USA". Only the last one belongs to the trailing state.
+  const tail = (seg) => seg.split(/[;|]/).pop();
+  const clean = segments.map((seg) => tail(seg).replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim());
+  let end = clean.length;
+  let usTail = false;
+  while (end > 0) {
+    const seg = clean[end - 1];
+    if (/^\d{5}(\s?\d{4})?$/.test(seg)) { end -= 1; continue; }
+    if (LOOKUP.get(seg) === 'us' && !US_STATE_NAMES.has(seg)) { usTail = true; end -= 1; continue; }
+    break;
+  }
+  if (end === 0) return null;
+
+  const st = clean[end - 1];
+  const city = end >= 2 ? clean[end - 2] : null;
+  // Everything before the city: whole segments, plus any address the city's own segment carries
+  // ahead of a ";" — minus segments that are themselves US states.
+  const cityRaw = end >= 2 ? segments[end - 2] : '';
+  const startsAddress = tail(cityRaw) !== cityRaw; // "London, UK; Austin, TX": Austin opens one
+  const earlierParts = [
+    ...segments.slice(0, Math.max(0, end - 2)),
+    cityRaw.slice(0, cityRaw.length - tail(cityRaw).length),
+  ].flatMap((seg) => seg.split(/[;|]/))
+    .map((part) => part.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const earlierText = earlierParts
+    .filter((part, i) => !US_STATE_NAMES.has(part)
+      || (part === 'georgia' && GEORGIA_COUNTRY_CITIES.has(earlierParts[i - 1])))
+    .join(' ');
+  const reading = (codes) => ({ codes, earlierText });
+
+  if (US_STATE_NAMES.has(st)) {
+    if (st === 'georgia') {
+      if (city && GEORGIA_COUNTRY_CITIES.has(city)) return null;
+      // A city written in a script that folds to nothing ("თბილისი, , Georgia") is Georgian.
+      if (segments.slice(0, end - 1).some((seg) => /[^\u0000-\u024f]/.test(seg))) return null;
+      // A lone "Georgia" names nothing else to decide by. Keep both readings.
+      if (!city && !usTail) return reading(['us', 'ge']);
+    }
+    return reading(st === 'puerto rico' ? ['us', 'pr'] : ['us']);
+  }
+
+  if (!US_STATES.has(st) || city === st) return null;
+  if (!usTail && end !== 2 && !startsAddress) return null;
+  if (usTail) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
+
+  const rawLast = String(rawText).split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean).pop() || '';
+  if (/^[a-z]{2}$/.test(rawLast) && /[A-Z]/.test(String(rawText)) && NAME.has(st)) return reading([st]);
+  const foreign = FOREIGN_BY_CITY_STATE.get(`${city}|${st}`);
+  if (foreign) return reading([foreign]);
+  if (st === 'de' && !DELAWARE_TOWNS.has(city)) return reading(['de']);
+  return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
 }
 
 module.exports = { resolveCountry, countriesFromLocation, NAME };
@@ -287,3 +478,10 @@ function locationTokens(text) {
 
 module.exports.locationTokens = locationTokens;
 module.exports.norm = norm;
+// Whether the trailing-US-state rule decides this location's countries. Every tag the rule
+// changed on 2026-09-26 went through it, so this is exactly the set of stored documents that
+// scripts/requeue-index-recall.js has to re-send.
+module.exports.endsInUsState = (text) => {
+  const s = norm(text).replace(/\./g, '');
+  return !!s && !!usStateReading(s.split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean), text);
+};
