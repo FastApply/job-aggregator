@@ -57,6 +57,17 @@ async function closeDb() {
   }
 }
 
+// A client checked out of the pool has no 'error' listener of its own (the pool only watches IDLE
+// clients), so a socket dropped mid-query — a tunnel blip, a server restart — was emitted as an
+// unhandled 'error' event and killed the whole process instead of failing the one query. Seen
+// 2026-09-26: a long maintenance script over the SSH tunnel died that way. The pending query
+// still rejects on its own; this only keeps the event from being fatal.
+function guardClient(client) {
+  const onError = (err) => logger.warn({ err: err.message }, 'PG checked-out client error');
+  client.on('error', onError);
+  return () => client.removeListener('error', onError);
+}
+
 /**
  * Run one query with a longer statement_timeout than the pool default.
  *
@@ -73,6 +84,7 @@ async function closeDb() {
 async function queryWithTimeout(sql, params = [], timeoutMs = 60000) {
   if (!isPostgres) return query(sql, params);
   const client = await getDb().connect();
+  const unguard = guardClient(client);
   try {
     await client.query(`SET statement_timeout = ${parseInt(timeoutMs, 10)}`);
     let idx = 0;
@@ -86,6 +98,7 @@ async function queryWithTimeout(sql, params = [], timeoutMs = 60000) {
     return { rows: result.rows, rowCount: result.rowCount, lastId: result.rows?.[0]?.id || null };
   } finally {
     try { await client.query('SET statement_timeout = DEFAULT'); } catch { /* connection is going away anyway */ }
+    unguard();
     client.release();
   }
 }
@@ -155,6 +168,7 @@ async function exec(sql) {
 async function transaction(fn) {
   if (isPostgres) {
     const client = await getDb().connect();
+    const unguard = guardClient(client);
     try {
       await client.query('BEGIN');
       const result = await fn({
@@ -173,6 +187,7 @@ async function transaction(fn) {
       await client.query('ROLLBACK');
       throw err;
     } finally {
+      unguard();
       client.release();
     }
   }
