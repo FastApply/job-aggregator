@@ -120,8 +120,8 @@ test('index time: the names neighbouring languages use resolve too', () => {
 
 test('a US town called Nederland or Holland is not the Netherlands', () => {
   assert.deepEqual(countriesFromLocation('Nederland, Texas, United States'), ['us']);
-  assert.deepEqual(countriesFromLocation('Nederland, CO'), []);
-  assert.deepEqual(countriesFromLocation('Holland, MI'), []);
+  assert.deepEqual(countriesFromLocation('Nederland, CO'), ['us']);
+  assert.deepEqual(countriesFromLocation('Holland, MI'), ['us']);
   assert.deepEqual(countriesFromLocation('Holland, Michigan, United States'), ['us']);
   // ...while the real thing still resolves, with or without a province in the middle.
   assert.deepEqual(countriesFromLocation('Utrecht, Nederland'), ['nl']);
@@ -130,26 +130,26 @@ test('a US town called Nederland or Holland is not the Netherlands', () => {
 });
 
 test('names that are also places elsewhere are deliberately not aliases', () => {
-  assert.deepEqual(countriesFromLocation('Dania Beach, FL'), []); // not Denmark
+  assert.deepEqual(countriesFromLocation('Dania Beach, FL'), ['us']); // not Denmark
   assert.deepEqual(countriesFromLocation('Franca, SP, Brasil'), ['br']); // not France
-  assert.deepEqual(countriesFromLocation('Long Island, NY'), []); // not Iceland
+  assert.deepEqual(countriesFromLocation('Long Island, NY'), ['us']); // not Iceland
 });
 
 test('the guards that existed before still hold', () => {
-  // US state codes are not countries.
-  assert.deepEqual(countriesFromLocation('Wilmington, DE'), []);
+  // US state codes are not the countries they collide with; they are the US.
+  assert.deepEqual(countriesFromLocation('Wilmington, DE'), ['us']);
   assert.deepEqual(countriesFromLocation('Indianapolis, IN, US'), ['us']);
-  assert.deepEqual(countriesFromLocation('Richmond, VA'), []);
+  assert.deepEqual(countriesFromLocation('Richmond, VA'), ['us']);
   // Repeated trailing codes are countries.
   assert.deepEqual(countriesFromLocation('London, England, GB, GB'), ['gb']);
   // Substrings are not countries.
   assert.deepEqual(countriesFromLocation('Nigeria'), ['ng']);
   assert.deepEqual(countriesFromLocation('Indianapolis'), []);
   // "Island" must never read as Iceland (Ísland): it is in thousands of US locations.
-  assert.deepEqual(countriesFromLocation('Long Island, NY'), []);
+  assert.deepEqual(countriesFromLocation('Long Island, NY'), ['us']);
   assert.deepEqual(countriesFromLocation('Staten Island'), []);
-  // Georgia stays ambiguous on purpose; the query side ORs the substring in.
-  assert.deepEqual(countriesFromLocation('Atlanta, Georgia'), ['ge']);
+  // "X, Georgia" is the state unless X is a Georgian city (us-state-locations.test.js).
+  assert.deepEqual(countriesFromLocation('Atlanta, Georgia'), ['us']);
 });
 
 test('index time: a city carries its other spellings so either one finds it', () => {
