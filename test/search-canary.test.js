@@ -35,3 +35,33 @@ test('the pairs are disjoint: one title cannot satisfy both roles', () => {
     assert.deepEqual(missingRoles([b], [a, b]), [a], `${b} must not read as ${a}`);
   }
 });
+
+const { recallChecks } = require('../src/tasks/search-canary');
+const job = (id, over = {}) => ({ id, title: `Nurse ${id}`, company: { id: 7 }, employment_type: null, location: null, ...over });
+
+test('recall probe: a raw employment type is re-asked for by its canonical filter', () => {
+  const [c] = recallChecks([job(1, { employment_type: 'Full time' })]);
+  assert.equal(c.id, 1);
+  assert.equal(c.filter, 'employment_type=full-time');
+  assert.match(c.qs, /company_id=7/);
+  assert.equal(c.control, c.qs.replace('&employment_type=full-time', ''), 'the control is the same query without the filter');
+  assert.match(c.qs, /q=Nurse%201/);
+});
+
+test('recall probe: only unambiguous US "City, ST" rows are probed against United States', () => {
+  const checks = recallChecks([
+    job(1, { location: 'Austin, TX' }),
+    job(2, { location: 'San Francisco, CA' }), // CA is also Canada: not the probe's call to make
+    job(3, { location: 'Paris, France' }),
+  ]).filter((c) => c.filter === 'location=United States');
+  assert.deepEqual(checks.map((c) => c.id), [1]);
+});
+
+test('recall probe stays small', () => {
+  const many = Array.from({ length: 50 }, (_, i) => job(i + 1, { employment_type: 'Full-time', location: 'Austin, TX' }));
+  assert.equal(recallChecks(many).length, 4);
+});
+
+test('recall probe skips rows it cannot re-query', () => {
+  assert.deepEqual(recallChecks([{ id: 1, title: 'x', employment_type: 'Full-time' }]), []);
+});

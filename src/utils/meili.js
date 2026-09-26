@@ -11,6 +11,7 @@
  */
 const logger = require('../logger');
 const { countriesFromLocation, locationTokens } = require('./location-countries');
+const { normalizeEmploymentType } = require('./extract');
 
 const HOST = process.env.MEILI_HOST || '';
 const KEY = process.env.MEILI_MASTER_KEY || '';
@@ -158,7 +159,14 @@ function toDocument(row) {
     // an exact filter the index actually serves.
     location_tokens: locationTokens(row.location),
     workplace_type: row.workplace_type || null,
-    employment_type: row.employment_type || null,
+    // Canonical, because the search filters on the canonical value by exact match (jobs-search
+    // buildFilter normalises the request the same way). The column is supposed to hold canonical
+    // values already, but writers that bypass jobsRepo's upsert do not normalise: on 2026-09-26
+    // the live corpus held "Full time", "full_time", "FullTime", "FULL_TIME" and dozens more, and
+    // employment_type=full-time silently dropped 21% of full-time jobs (57% of temporary). One
+    // employer's 175 full-time jobs returned 0. Anything the normaliser cannot place keeps its
+    // raw text, so the value shown to users loses nothing.
+    employment_type: normalizeEmploymentType(row.employment_type) || row.employment_type || null,
     experience_level: row.experience_level || null,
     visa_sponsorship: row.visa_sponsorship || null,
     role_category: row.role_category || null,
