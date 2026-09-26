@@ -26,7 +26,13 @@
  * Env: BATCH (20000 ids scanned per step) · MAX_OUTBOX (4000) · POLL_MS (20000) · CKPT
  */
 const fs = require('fs');
-const { query, queryWithTimeout, closeDb } = require('../src/db/connection');
+const db = require('../src/db/connection');
+
+// render-deploy's connection module has no queryWithTimeout (its pool already allows 60s), so fall
+// back to plain query there. This script runs from either branch.
+const longQuery = db.queryWithTimeout
+  ? (sql, params) => db.queryWithTimeout(sql, params, 120000)
+  : (sql, params) => db.query(sql, params);
 const { normalizeEmploymentType } = require('../src/utils/extract');
 const { endsInUsState } = require('../src/utils/location-countries');
 
@@ -45,7 +51,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function run(sql, params = []) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await queryWithTimeout(sql, params, 120000);
+      return await longQuery(sql, params);
     } catch (err) {
       if (attempt === 5) throw err;
       console.error(`\n  retry ${attempt + 1}: ${err.message}`);
@@ -106,7 +112,7 @@ async function main() {
 
   console.log(`\n\n=== ${APPLY ? 'APPLIED' : 'SHADOW (nothing written)'} ===`);
   console.log(`live jobs scanned: ${scanned.toLocaleString()} · documents ${APPLY ? 'queued' : 'to queue'}: ${marked.toLocaleString()}`);
-  await closeDb();
+  await db.closeDb();
 }
 
 if (require.main === module) main().catch((err) => { console.error('\n', err.message); process.exit(1); });
