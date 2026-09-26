@@ -173,4 +173,36 @@ function extractEmploymentType(title, description) {
   return null;
 }
 
-module.exports = { extractSalary, extractWorkplaceType, extractEmploymentType };
+// Canonical employment types. Every ATS spells these differently and we stored whatever they
+// sent: 4,784 distinct values across 1.87M live jobs, of which "Full time", "Full-time",
+// "Full-Time", "Full Time", "FULL_TIME", "FullTime", "full_time" and "fulltime_permanent" are
+// all the same thing. That made the sidebar facet useless (thousands of "types") and the
+// employment_type filter unreliable, since a user picking one spelling missed the rest.
+const EMPLOYMENT_TYPES = ['Full-time', 'Part-time', 'Contract', 'Internship', 'Temporary', 'Volunteer'];
+
+function normalizeEmploymentType(raw) {
+  if (!raw) return null;
+  // Strip HTML entities and separators so "Full &amp; Part-Time" / "full_time" both reduce.
+  const t = String(raw).toLowerCase().replace(/&amp;/g, '&').replace(/[_/]+/g, ' ').trim();
+  if (!t || t === 'other' || t === 'n/a' || t === 'unknown' || t === 'none') return null;
+
+  // Order matters. Internship and temporary win over the full/part qualifier that usually
+  // accompanies them ("Internship - Full Time" is an internship). Part-time is checked before
+  // full-time because "Permanent - Part Time" contains both signals and part-time is the
+  // specific one.
+  // Non-English spellings are checked before the English "temp" rule on purpose: French
+  // "temps plein" (full time) must not be read as "temporary".
+  if (/\btemps plein\b/.test(t)) return 'Full-time';
+  if (/\btemps partiel\b/.test(t)) return 'Part-time';
+
+  if (/\bintern(ship)?\b|\bstagiaire\b|\bpracticante\b/.test(t)) return 'Internship';
+  if (/\bvolunteer\b|\bvoluntario\b/.test(t)) return 'Volunteer';
+  // PRN and per-diem are the healthcare boards' term for shift-by-shift work.
+  if (/\btemp(orary)?\b|\bseasonal\b|\bfixed[\s-]?term\b|\binterim\b|\bcasual\b|\bprn\b|\bper[\s-]?diem\b/.test(t)) return 'Temporary';
+  if (/\bcontract(or|ed)?\b|\bfreelance\b|\b1099\b|\bconsultant\b|\bb2b\b|\bcontrato\b/.test(t)) return 'Contract';
+  if (/\bpart[\s-]?time\b|\bparttime\b|\bmoonlight(er)?\b|\bmedio tiempo\b|\btiempo parcial\b|\bteilzeit\b/.test(t)) return 'Part-time';
+  if (/\bfull[\s-]?time\b|\bfulltime\b|\bpermanent\b|\bregular\b|\btiempo completo\b|\bvollzeit\b/.test(t)) return 'Full-time';
+  return null; // unrecognised free text is dropped rather than shown as a filter option
+}
+
+module.exports = { extractSalary, extractWorkplaceType, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES };
