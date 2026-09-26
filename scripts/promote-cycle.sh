@@ -102,7 +102,11 @@ for SRC in ${PROMOTE_SOURCES:-crawled}; do
   # That is what made the 2026-09-11 17:00 cycle stop inserting at employer 5,020 of 55,609 and
   # then fail the remaining 50,589 -- while still exiting rc=0. 100 rows is ~710 KB, which clears
   # the timeout with room to spare.
-  SOURCE=$SRC APPLY=1 CONCURRENCY=5 INSERT_BATCH=100 OUTBOX_MAX=40000 \
+  #
+  # CONCURRENCY 12, not 5, since 2026-09-26: prod is the VPS Postgres behind an SSH tunnel with a
+  # ~200 ms round trip, and most employers are all duplicates, so a cycle is bound by per-employer
+  # round trips, not by upload. Inserts stay at 100 rows, which is what protects the uplink.
+  SOURCE=$SRC APPLY=1 CONCURRENCY=12 INSERT_BATCH=100 OUTBOX_MAX=40000 \
     CHECKPOINT="$CP" node scripts/promote-missing-to-prod.js >"$RUNLOG" 2>&1
   rc=$?
   say "  rc=$rc  full log: $RUNLOG"
