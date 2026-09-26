@@ -26,7 +26,7 @@
  * Env: BATCH (20000 ids scanned per step) · MAX_OUTBOX (4000) · POLL_MS (20000) · CKPT
  */
 const fs = require('fs');
-const { query, closeDb } = require('../src/db/connection');
+const { query, queryWithTimeout, closeDb } = require('../src/db/connection');
 const { normalizeEmploymentType } = require('../src/utils/extract');
 const { endsInUsState } = require('../src/utils/location-countries');
 
@@ -36,6 +36,23 @@ const MAX_OUTBOX = parseInt(process.env.MAX_OUTBOX || '4000', 10);
 const POLL_MS = parseInt(process.env.POLL_MS || '20000', 10);
 const CKPT = process.env.CKPT || '/tmp/index-recall-requeue.pos';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Each statement on its own dedicated client with a raised timeout. The first shadow run
+// (2026-09-26) died at 30% with "Query read timeout": a session-level `SET statement_timeout = 0`
+// only reaches whichever pooled connection ran it, so later queries kept the pool's 20s
+// client-side abort — which one slow range over the SSH tunnel exceeded. Retried with backoff,
+// as seed-salary-reindex.js does, so a blip costs a few seconds instead of the run.
+async function run(sql, params = []) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await queryWithTimeout(sql, params, 120000);
+    } catch (err) {
+      if (attempt === 5) throw err;
+      console.error(`\n  retry ${attempt + 1}: ${err.message}`);
+      await sleep(2000 * (attempt + 1) ** 2);
+    }
+  }
+}
 
 /** Pure. Would this row's document change under the 2026-09-26 toDocument? */
 function needsResend(row) {
@@ -47,15 +64,13 @@ function needsResend(row) {
 }
 
 async function outboxDepth() {
-  const { rows: [r] } = await query('SELECT COUNT(*)::int n FROM jobs WHERE index_dirty_at IS NOT NULL');
+  const { rows: [r] } = await run('SELECT COUNT(*)::int n FROM jobs WHERE index_dirty_at IS NOT NULL');
   return r.n;
 }
 
 async function main() {
   console.log(`mode: ${APPLY ? 'APPLY' : 'SHADOW'}`);
-  await query('SET statement_timeout = 0');
-
-  const { rows: [b] } = await query('SELECT MIN(id) AS lo, MAX(id) AS hi FROM jobs');
+  const { rows: [b] } = await run('SELECT MIN(id) AS lo, MAX(id) AS hi FROM jobs');
   let from = Number(b.lo) - 1;
   const hi = Number(b.hi);
   if (APPLY && fs.existsSync(CKPT)) {
@@ -67,7 +82,7 @@ async function main() {
   const started = Date.now();
   while (from < hi) {
     const to = Math.min(from + BATCH, hi);
-    const { rows } = await query(
+    const { rows } = await run(
       `SELECT id, employment_type, location FROM jobs
         WHERE id > ${from} AND id <= ${to} AND removed_at IS NULL`);
     const ids = rows.filter(needsResend).map((r) => r.id);
@@ -75,7 +90,7 @@ async function main() {
 
     if (APPLY && ids.length) {
       while (await outboxDepth() >= MAX_OUTBOX) await sleep(POLL_MS);
-      const r = await query(
+      const r = await run(
         'UPDATE jobs SET index_dirty_at = COALESCE(index_dirty_at, NOW()) WHERE id = ANY($1::int[])', [ids]);
       marked += r.rowCount || 0;
     } else {
