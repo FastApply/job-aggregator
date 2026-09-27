@@ -51,18 +51,29 @@ async function wdFetch(url, init, retries = 5) {
  * Returns { wdNum, siteSlug, sites } — siteSlug is kept for callers that only handle one site
  * (backfill-descriptions.js), sites is the full list for fetchJobs to merge across.
  */
-async function discoverConfig(slug) {
+async function discoverConfig(slug, { retryDelays = [2000, 4000] } = {}) {
   const known = WORKDAY_SITES[String(slug || '').toLowerCase()];
   if (known && known.sites.length) {
     return { wdNum: known.wdNum, siteSlug: known.sites[0], sites: known.sites };
   }
 
+  // A probe that ends in 429/503 or a timeout has not told us the tenant is absent from that pod,
+  // only that Workday did not answer. These probes used plain fetch and moved on, so a burst of
+  // throttling made every pod look empty and a healthy tenant was written off. Measured
+  // 2026-09-26/27: 1,516 tenants failed in 24h at worker CONCURRENCY=20; re-crawled by hand, 4 of 5
+  // sampled "failed" tenants were live (dssmith 217 jobs, blackberryfarm 54, pax8inc and
+  // halifaxhealth 5,000 each).
+  let inconclusive = false;
   for (const wd of WD_NUMBERS) {
+    const url = `https://${slug}.wd${wd}.myworkdayjobs.com/robots.txt`;
     try {
-      const res = await fetch(
-        `https://${slug}.wd${wd}.myworkdayjobs.com/robots.txt`,
-        { signal: AbortSignal.timeout(5000) }
-      );
+      let res;
+      for (let attempt = 0; ; attempt++) {
+        res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if ((res.status !== 429 && res.status !== 503) || attempt >= retryDelays.length) break;
+        await new Promise((r) => setTimeout(r, retryDelays[attempt]));
+      }
+      if (res.status === 429 || res.status === 503) { inconclusive = true; continue; }
       if (!res.ok) continue;
       const text = await res.text();
       const match = text.match(/Sitemap:.*myworkdayjobs\.com\/([^/\s]+)/);
@@ -70,10 +81,38 @@ async function discoverConfig(slug) {
         return { wdNum: wd, siteSlug: match[1], sites: [match[1]] };
       }
     } catch {
-      // timeout or network error — try next
+      inconclusive = true; // timeout or network error: this pod is unknown, not empty
     }
   }
+  // Every pod answered and none had the tenant: a real miss. Otherwise say so, so the caller
+  // retries later instead of counting it against the tenant.
+  if (inconclusive) throw new Error(`Workday: discovery throttled for ${slug}, retry later`);
   return null;
+}
+
+// Pod and career-site slug from a stored careers URL, e.g.
+//   https://halifaxhealth.wd12.myworkdayjobs.com/en-US/HalifaxHealth -> { wdNum: 12, site: HalifaxHealth }
+// Many company rows carry exactly this, yet discovery ignored it and guessed.
+const CAREER_URL_RE = /^https?:\/\/([a-z0-9-]+)\.wd(\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[a-z]{2}\/)?([^/?#]+)/i;
+function configFromCareerUrl(slug, careerUrl) {
+  const m = String(careerUrl || '').match(CAREER_URL_RE);
+  if (!m || m[1].toLowerCase() !== String(slug || '').toLowerCase()) return null;
+  const site = decodeURIComponent(m[3]);
+  if (!site || /^(wday|login|job|details)$/i.test(site)) return null;
+  return { wdNum: Number(m[2]), siteSlug: site, sites: [site] };
+}
+
+// A discovery miss is only permanent once it repeats. The crawler keeps the count in the
+// company's error_message ("... (miss 2/5)") and retires the tenant on the last one.
+const DISCOVERY_MISS_LIMIT = 5;
+function discoveryMissOutcome(prevErrorMessage, errMessage) {
+  const prev = /\(miss (\d+)\/\d+\)/.exec(prevErrorMessage || '');
+  const misses = (prev ? Number(prev[1]) : 0) + 1;
+  return {
+    misses,
+    retire: misses >= DISCOVERY_MISS_LIMIT,
+    message: `${String(errMessage).slice(0, 170)} (miss ${misses}/${DISCOVERY_MISS_LIMIT})`,
+  };
 }
 
 /**
@@ -157,7 +196,21 @@ async function buildDeptMap(baseUrl, facets) {
 /**
  * Fetch all jobs from a Workday career site with full details.
  */
-async function fetchJobs(clientname) {
+async function fetchJobs(clientname, { careerUrl } = {}) {
+  // Coordinates already on the company row beat guessing. If they are stale (site renamed, pod
+  // moved) the fetch fails and we fall through to discovery as before.
+  if (!WORKDAY_SITES[String(clientname || '').toLowerCase()]) {
+    const fromUrl = configFromCareerUrl(clientname, careerUrl);
+    if (fromUrl) {
+      try {
+        return await fetchSiteJobs(clientname, fromUrl.wdNum, fromUrl.siteSlug);
+      } catch (err) {
+        logger.warn({ slug: clientname, wdNum: fromUrl.wdNum, site: fromUrl.siteSlug, err: err.message },
+          'Workday: career URL coordinates failed, falling back to discovery');
+      }
+    }
+  }
+
   const config = await discoverConfig(clientname);
   if (!config) throw new Error(`Workday: could not discover config for ${clientname}`);
 
@@ -295,4 +348,4 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
   return { jobs, meta: { companyName, logoUrl } };
 }
 
-module.exports = { fetchJobs, discoverConfig };
+module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT };

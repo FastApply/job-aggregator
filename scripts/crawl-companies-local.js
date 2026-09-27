@@ -20,6 +20,7 @@
  *      ATS (comma list to override allowlist), ONCE=1 (drain due queue then exit).
  */
 const { getAdapter } = require('../src/adapters');
+const { discoveryMissOutcome } = require('../src/adapters/workday');
 const { companiesRepo, jobsRepo } = require('../src/db');
 const { query } = require('../src/db/connection');
 const { extractSalary, extractWorkplaceType, extractEmploymentType } = require('../src/utils/extract');
@@ -41,7 +42,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // A dead board / malformed slug (404, 400, gone) will never succeed — mark it
 // 'failed' so it drops out of the queue instead of re-looping forever. Rate limits
 // / timeouts / connection blips are transient — retry those soon.
-const isPermanentError = (msg) => /HTTP 40[04]\b|not found|no longer|invalid|could not discover/i.test(msg || '');
+//
+// "could not discover config" is deliberately NOT here any more: one missed Workday discovery was
+// retiring the tenant for good, and most of them were throttling, not dead boards (1,516 in 24h on
+// 2026-09-27; 4 of 5 sampled were live). Discovery misses are counted instead — see below.
+const isPermanentError = (msg) => /HTTP 40[04]\b|not found|no longer|invalid/i.test(msg || '');
+const isDiscoveryMiss = (msg) => /could not discover config/i.test(msg || '');
+// How long a Workday tenant waits after a discovery miss before it is tried again.
+const DISCOVERY_RETRY_MIN = parseInt(process.env.DISCOVERY_RETRY_MIN || '360', 10);
 
 const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error('fetch timeout ' + label)), ms))]);
 
@@ -59,14 +67,19 @@ async function claimBatch() {
           LIMIT ${BATCH}
           FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, ats, ats_slug`
+       RETURNING id, ats, ats_slug, career_url, error_message`
   );
   return rows;
 }
 
 async function crawlCompany(co) {
   const adapter = getAdapter(co.ats);
-  const result = await withTimeout(adapter.fetchJobs(co.ats_slug), FETCH_TIMEOUT, co.ats);
+  // careerUrl lets the workday adapter use the pod/site already on the row; others ignore it.
+  const result = await withTimeout(adapter.fetchJobs(co.ats_slug, { careerUrl: co.career_url }), FETCH_TIMEOUT, co.ats);
+  // A tenant that answers again has its discovery-miss count cleared.
+  if (co.error_message && isDiscoveryMiss(co.error_message)) {
+    await query('UPDATE companies SET error_message = NULL WHERE id = ?', [co.id]).catch(() => {});
+  }
   const incoming = (result && (result.jobs || result)) || [];
   if (!incoming.length) return { jobs: 0, added: 0 };
   for (const job of incoming) {
@@ -117,7 +130,17 @@ async function crawlCompany(co) {
           try {
             // When proxied, a 404/400 is unreliable (IP/geo-dependent), NOT proof the
             // company is dead — so never retire; just re-due and retry with a new IP.
-            if (isPermanentError(e.message) && !proxy.enabled) {
+            if (isDiscoveryMiss(e.message)) {
+              // Counted, not fatal: retire only after DISCOVERY_MISS_LIMIT misses in a row, and
+              // space the retries so a throttled window cannot burn through them.
+              const { retire, message } = discoveryMissOutcome(co.error_message, e.message);
+              if (retire && !proxy.enabled) {
+                await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [message, co.id]);
+                retired++;
+              } else {
+                await query(`UPDATE companies SET error_message = ?, last_synced_at = NOW() + INTERVAL '${Math.max(0, DISCOVERY_RETRY_MIN - STALE_MIN)} minutes' WHERE id = ?`, [message, co.id]);
+              }
+            } else if (isPermanentError(e.message) && !proxy.enabled) {
               // dead board / bad slug — retire it so it stops clogging the queue
               await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [String(e.message).slice(0, 200), co.id]);
               retired++;
