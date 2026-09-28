@@ -9,7 +9,7 @@ const { discoverConfig } = require('../adapters/workday');
 const logger = require('../logger');
 const metrics = require('../utils/metrics');
 const { stripHtml } = require('../utils/html');
-const { extractWorkplaceType } = require('../utils/extract');
+const { extractWorkplaceTypeFromDescription } = require('../utils/extract');
 const { classifyJob } = require('../utils/classify');
 
 // Only ATS platforms that return descriptions without Browserless.
@@ -1047,7 +1047,7 @@ async function tagWorkplaceFromDescription(job, description) {
   if (job.workplace_type || job.title == null) return;
   try {
     const plain = stripHtml(description);
-    const workplace = extractWorkplaceType(job.title, job.location, plain);
+    const workplace = extractWorkplaceTypeFromDescription(job.title, job.location, plain);
     if (!workplace) return;
     const tags = classifyJob({ title: job.title, location: job.location, workplace_type: workplace, description: plain });
     await query('UPDATE jobs SET workplace_type = ?, is_remote = ?, remote_worldwide = ? WHERE id = ? AND workplace_type IS NULL',

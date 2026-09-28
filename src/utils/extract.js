@@ -225,6 +225,41 @@ function extractWorkplaceType(title, location, description) {
   return null;
 }
 
+// A description saying fully remote in so many words. The crawl-time rule above calls a job remote
+// on the bare word anywhere in its text, which on a 20k live sample of late-fetched descriptions was
+// wrong about half the time: "not conducive of telecommuting or remote work", "remote access",
+// "ocean remote sensing", "the remote and calming areas of Sandbridge", a nurse role whose
+// employer notes that SOME positions are remote.
+const STRONG_REMOTE_EN = new RegExp([
+  '\\b(?:is|be|are|operating in an?)\\s+(?:100%|fully|completely|entirely|permanently)\\s+remote\\b',
+  '\\b(?:fully|100%|completely|entirely|permanently)\\s+remote\\s+(?:position|role|job|opportunity|capacity|company|team)\\b',
+  '\\b(?:is|as)\\s+(?:(?!not\\b)\\w+\\s+)?an?\\s+(?:(?!not\\b)\\w+\\s+)?remote\\s+(?:position|role|job|opportunity)\\b',
+  '\\bremote[\\s-](?:first|only)\\b', '\\bwork\\s+from\\s+anywhere\\b', '#li-remote\\b',
+].join('|'), 'i');
+// ...and the ways postings say the opposite with the same words: "this is not a remote position"
+// (Kimley-Horn, on every posting), "fully remote work is not available", "does not apply to fully
+// remote roles", "exceptions will be granted for those in fully remote status".
+const NOT_REMOTE_EN = /\bnot\s+(?:an?\s+)?(?:\w+\s+)?remote\b|\bnon[\s-]remote\b|\bno\s+remote\b|\bremote(?:\s+work)?\s+is\s+not\b|\bdoes\s+not\s+apply\s+to\s+(?:fully\s+)?remote\b|\bexceptions?\b.{0,80}\bremote\b/i;
+// Remote as part of a thing, not a work model: "Senior Program Manager - Remote Sensing".
+const REMOTE_IN_HEAD = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))|\btelecommute\b|\bwork from home\b/i;
+
+/**
+ * extractWorkplaceType for a description fetched after the crawl, which is written onto a job the
+ * crawl left untagged and so puts it in or out of remote searches on the text alone. Hybrid and
+ * on-site read as the crawl reads them; remote needs the title or location to say so, or the text
+ * to say it unambiguously. Anything weaker leaves the job untagged, as it was.
+ */
+function extractWorkplaceTypeFromDescription(title, location, description) {
+  const wt = extractWorkplaceType(title, location, description);
+  if (wt !== 'remote') return wt;
+  const head = `${title || ''} ${location || ''}`;
+  if (REMOTE_IN_HEAD.test(head) || LOCATION_IS_GLOBAL.test(location || '')) return 'remote';
+  const text = String(description || '');
+  if (NOT_REMOTE_EN.test(text)) return null;
+  if (FULL_REMOTE_INTL.test(text) || STRONG_REMOTE_EN.test(text)) return 'remote';
+  return null;
+}
+
 /**
  * Detect employment type from job fields.
  */
@@ -272,4 +307,4 @@ function normalizeEmploymentType(raw) {
   return null; // unrecognised free text is dropped rather than shown as a filter option
 }
 
-module.exports = { extractSalary, extractWorkplaceType, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES };
+module.exports = { extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES };
