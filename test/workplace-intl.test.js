@@ -59,3 +59,26 @@ test('English wording reads exactly as before', () => {
 test('a purely global location is remote whatever the description says', () => {
   assert.equal(extractWorkplaceType('Lead', 'Worldwide', 'Git-based, wiki, or hybrid documentation'), 'remote');
 });
+
+test('a late-fetched description makes a job remote only when it says so unambiguously', () => {
+  const { extractWorkplaceTypeFromDescription: late } = require('../src/utils/extract');
+  for (const text of [
+    'This position is located in the hotel and is not conducive of telecommuting or remote work.',
+    'Provide remote and in-person end-user support; remote access tunnels and ShareFile.',
+    'advanced signal processing, ocean remote sensing, and high-performance computing',
+    'For positions that are available as remote work, Sentara Health employs associates in these states',
+    'if eligible, telework and/or remote work agreements may be permitted with supervisory approval',
+    'Join our Houston, Texas (TX) office! This is not a remote position.',
+    'Applicants must live within commuting distance. Fully remote work is not available for this role.',
+    'This transition does not apply to fully remote roles.',
+    'Exceptions will be granted for those in fully remote status.',
+  ]) assert.equal(late('Registered Nurse', 'Suffolk, VA', text), null, text);
+  assert.equal(late('Senior Program Manager - Remote Sensing', 'Arlington, Virginia', 'satellite imagery'), null);
+  assert.equal(late('Manager of Talent Acquisition', 'Oconomowoc, WI', 'This position is fully remote, however the candidate must reside in WI'), 'remote');
+  assert.equal(late('Senior Counsel', 'US-Nationwide-FIELD', 'candidates based nationwide, operating in a fully remote capacity'), 'remote');
+  assert.equal(late('Senior Product Manager', 'Remote (US)', 'video conferencing software'), 'remote');
+  assert.equal(late('Engineer', 'Boston, MA', 'While this is primarily a remote position, we meet quarterly'), 'remote');
+  assert.equal(late('Account Manager', 'Rotterdam, NY', 'We will not sponsor. #LI-Remote'), 'remote');
+  assert.equal(late('Engineer', 'Berlin', 'Die Stelle ist vollständig remote'), 'remote');
+  assert.equal(late('Engineer', 'Berlin', 'flexible Arbeitszeiten im Homeoffice und Büro'), 'hybrid');
+});

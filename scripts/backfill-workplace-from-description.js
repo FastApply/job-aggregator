@@ -24,7 +24,7 @@
 const fs = require('fs');
 const db = require('../src/db/connection');
 const { stripHtml } = require('../src/utils/html');
-const { extractWorkplaceType } = require('../src/utils/extract');
+const { extractWorkplaceTypeFromDescription } = require('../src/utils/extract');
 const { classifyJob } = require('../src/utils/classify');
 
 const longQuery = db.queryWithTimeout
@@ -53,7 +53,7 @@ async function run(sql, params = []) {
 /** Pure. The new tag and the flags derived from it, or null when the text says nothing. */
 function tagFor(row) {
   const plain = stripHtml(row.description);
-  const workplace = extractWorkplaceType(row.title, row.location, plain);
+  const workplace = extractWorkplaceTypeFromDescription(row.title, row.location, plain);
   if (!workplace) return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
   return { workplace, is_remote: tags.is_remote, remote_worldwide: tags.remote_worldwide };
