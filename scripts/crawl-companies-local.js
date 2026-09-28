@@ -62,6 +62,10 @@ async function claimBatch() {
        WHERE id IN (
          SELECT id FROM companies
           WHERE status = 'active' AND ats IS NOT NULL AND ats IN (${inList}) AND ats_slug IS NOT NULL
+            -- Workable marketplace employers ("wjb_<id>") have no apply.workable.com account to
+            -- fetch; the marketplace walk in render-worker keeps them. Claiming them would send
+            -- Workable ~3,000 guaranteed 404s from a fresh IP, which is how the old one got blocked.
+            AND NOT (ats = 'workable' AND ats_slug LIKE 'wjb\_%')
             AND (last_synced_at IS NULL OR last_synced_at < NOW() - INTERVAL '${STALE_MIN} minutes')
           ORDER BY last_synced_at ASC NULLS FIRST
           LIMIT ${BATCH}
