@@ -53,6 +53,7 @@ const SPELLING = {
   singapor: 'singapore',
   'south korea': 'korea, republic of',
   'united arab emirate': 'united arab emirates',
+  'united state': 'united states',
   england: 'united kingdom',
   scotland: 'united kingdom',
   wales: 'united kingdom',
