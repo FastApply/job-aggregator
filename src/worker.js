@@ -184,7 +184,7 @@ async function main() {
     if (workableMarketplaceRunning) { logger.warn('Workable marketplace crawl still running, skipping'); return; }
     workableMarketplaceRunning = true;
     try {
-      const added = await crawlWorkableMarketplace();
+      const { added } = await crawlWorkableMarketplace();
       logger.info({ added }, 'Workable marketplace crawl cycle complete');
     } catch (err) {
       logger.error({ err: err.message }, 'Workable marketplace crawl error');

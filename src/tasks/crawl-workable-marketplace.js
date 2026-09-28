@@ -104,10 +104,16 @@ async function upsertJob(job, companyId) {
       location = EXCLUDED.location,
       workplace_type = EXCLUDED.workplace_type,
       employment_type = EXCLUDED.employment_type,
-      description = COALESCE(EXCLUDED.description, jobs.description),
+      -- Only when changed: a walk re-sends all ~170k jobs several times a day, and assigning
+      -- the large TOASTed columns unconditionally rewrites them even when byte-identical (see
+      -- syncForCompany in jobs.js: 27 MB -> 3.6 MB of WAL per 2,000 unchanged rows).
+      description = CASE WHEN EXCLUDED.description IS NOT NULL
+                          AND EXCLUDED.description IS DISTINCT FROM jobs.description
+                         THEN EXCLUDED.description ELSE jobs.description END,
       url = EXCLUDED.url,
       posted_at = EXCLUDED.posted_at,
-      raw_data = EXCLUDED.raw_data,
+      raw_data = CASE WHEN EXCLUDED.raw_data IS DISTINCT FROM jobs.raw_data
+                      THEN EXCLUDED.raw_data ELSE jobs.raw_data END,
       last_seen_at = datetime('now'),
       removed_at = NULL`,
     [
@@ -131,8 +137,16 @@ async function upsertJob(job, companyId) {
   );
 }
 
-async function crawlWorkableMarketplace() {
-  logger.info('Workable marketplace crawl: starting');
+/**
+ * Walk the marketplace newest-first, upserting every job. Returns the walk's stats; `complete`
+ * means the API ran out of pages (not that we hit maxPages or an error), and `totalSize` is what
+ * the API said it held when the walk began — together they decide whether retirement may run.
+ */
+async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {}) {
+  logger.info({ maxPages }, 'Workable marketplace crawl: starting');
+  const startedAt = new Date();
+  let totalSize = null;
+  let complete = false;
 
   let pageToken = null;
   let totalProcessed = 0;
@@ -141,7 +155,7 @@ async function crawlWorkableMarketplace() {
   const companyCache = new Map();
 
   try {
-    while (pagesProcessed < MAX_PAGES_PER_CYCLE) {
+    while (pagesProcessed < maxPages) {
       const url = pageToken
         ? `${API_BASE}/jobs?query=&location=&pageToken=${encodeURIComponent(pageToken)}`
         : `${API_BASE}/jobs?query=&location=`;
@@ -161,9 +175,10 @@ async function crawlWorkableMarketplace() {
         }
       }
       if (!data) break;
+      if (totalSize == null && Number.isFinite(data.totalSize)) totalSize = data.totalSize;
       const jobs = data.jobs || [];
 
-      if (jobs.length === 0) break;
+      if (jobs.length === 0) { complete = true; break; }
 
       for (const job of jobs) {
         try {
@@ -189,6 +204,7 @@ async function crawlWorkableMarketplace() {
 
       if (!pageToken) {
         logger.info('Workable marketplace crawl: reached end of results');
+        complete = true;
         break;
       }
 
@@ -203,18 +219,72 @@ async function crawlWorkableMarketplace() {
     pagesProcessed,
     totalProcessed,
     totalAdded,
+    totalSize,
+    complete,
     companiesCached: companyCache.size,
   }, 'Workable marketplace crawl: complete');
 
-  return totalAdded;
+  return { added: totalAdded, processed: totalProcessed, totalSize, complete, startedAt };
 }
 
-module.exports = { crawlWorkableMarketplace };
+// A walk must cover this share of what the API said it held before its absences mean anything.
+const RETIRE_MIN_COVERAGE = parseFloat(process.env.MARKETPLACE_RETIRE_MIN_COVERAGE || '0.9');
+// ...and a job must have been missing this long, i.e. from every walk in that window, so one bad
+// page or a job briefly unlisted is never enough.
+const RETIRE_GRACE_HOURS = parseInt(process.env.MARKETPLACE_RETIRE_GRACE_HOURS || '24', 10);
+const RETIRE_CHUNK = 5000;
+const RETIRE_MAX_OUTBOX = parseInt(process.env.MARKETPLACE_RETIRE_MAX_OUTBOX || '20000', 10);
+
+/** Pure. May this walk's absences retire jobs, and if not, why. */
+function retirementVerdict(walk) {
+  if (!walk || !walk.complete) return { ok: false, reason: 'walk did not reach the end of the marketplace' };
+  if (!walk.totalSize) return { ok: false, reason: 'the API reported no total to check coverage against' };
+  const coverage = walk.processed / walk.totalSize;
+  if (coverage < RETIRE_MIN_COVERAGE) return { ok: false, reason: `walk saw ${(coverage * 100).toFixed(1)}% of the ${walk.totalSize} listed` };
+  return { ok: true };
+}
+
+/**
+ * Retire marketplace jobs no complete walk has seen for RETIRE_GRACE_HOURS.
+ *
+ * Nothing retired these before: dead-job-check retires a job its company's crawl stopped seeing,
+ * and marketplace companies are never crawled company-by-company. By 2026-09-28, 144,740 of
+ * 145,733 live marketplace jobs had not been seen for 7+ days, some since June — closed postings
+ * still offered to users and to First Apply. Soft delete: removed_at, which the index trigger
+ * turns into a search removal. Chunked and paused on outbox depth like the other bulk updates.
+ */
+async function retireMissingMarketplaceJobs(walk) {
+  const verdict = retirementVerdict(walk);
+  if (!verdict.ok) {
+    logger.warn({ reason: verdict.reason }, 'Workable marketplace: retirement skipped');
+    return 0;
+  }
+  const cutoff = new Date(walk.startedAt.getTime() - RETIRE_GRACE_HOURS * 3600 * 1000);
+  let retired = 0;
+  for (;;) {
+    const { rows: [o] } = await query('SELECT COUNT(*)::int n FROM jobs WHERE index_dirty_at IS NOT NULL');
+    if (o.n >= RETIRE_MAX_OUTBOX) { await new Promise((r) => setTimeout(r, 20000)); continue; }
+    const r = await query(
+      `UPDATE jobs SET removed_at = NOW()
+        WHERE id IN (SELECT id FROM jobs
+                      WHERE ats = 'workable' AND external_id LIKE 'workable_mkt_%'
+                        AND removed_at IS NULL AND last_seen_at < ?
+                      LIMIT ${RETIRE_CHUNK})`,
+      [cutoff.toISOString()]);
+    const n = r.rowCount || 0;
+    retired += n;
+    if (n < RETIRE_CHUNK) break;
+  }
+  logger.info({ retired, cutoff: cutoff.toISOString() }, 'Workable marketplace: retired jobs no longer listed');
+  return retired;
+}
+
+module.exports = { crawlWorkableMarketplace, retireMissingMarketplaceJobs, retirementVerdict };
 
 // Standalone deep run: MARKETPLACE_MAX_PAGES=8500 walks the full ~170k marketplace.
 if (require.main === module) {
   if (!process.env.DATABASE_URL) { console.error('Set DATABASE_URL'); process.exit(1); }
   crawlWorkableMarketplace()
-    .then((added) => { console.log('Workable marketplace crawl finished — jobs upserted:', added); process.exit(0); })
+    .then((walk) => { console.log('Workable marketplace crawl finished — jobs upserted:', walk.added); process.exit(0); })
     .catch((e) => { console.error('FATAL', e); process.exit(1); });
 }

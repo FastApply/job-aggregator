@@ -5,7 +5,7 @@
  *
  * It covers exactly the gap the local Mac fleet does NOT: the four "sync-only" platforms
  * (workday, icims, oracle, successfactors), plus the worker's maintenance loops. The Macs
- * still crawl the other 9 platforms + the workable marketplace, so between this box and the
+ * still crawl the other 9 platforms (the workable marketplace moved here 2026-09-28), so between this box and the
  * Macs, everything the Heroku worker did is covered — and the worker can be scaled to 0.
  *
  *   crawl    — forks scripts/crawl-companies-local.js (ATS=the 4), the SAME claim-and-crawl
@@ -221,6 +221,21 @@ async function runHealthCheck() {
   setTimeout(runHealthCheck, 60 * 60 * 1000);
 }
 
+// --- Workable marketplace: jobs.workable.com, ~170k postings, no per-company crawl ---
+// Walks the whole marketplace, then retires what no walk has seen for a day, then waits and walks
+// again. Ran on a Mac until 2026-09-28, writing to the local database, and the promotion that
+// copied it here carried only NEW rows — so production never learned a job was still live or had
+// closed. MARKETPLACE_WALK=0 turns it off; a full walk is ~8,500 pages at 1s each (~2.5h).
+async function runWorkableMarketplace() {
+  if (shuttingDown) return;
+  const { crawlWorkableMarketplace, retireMissingMarketplaceJobs } = require('../src/tasks/crawl-workable-marketplace');
+  try {
+    const walk = await crawlWorkableMarketplace({ maxPages: parseInt(process.env.MARKETPLACE_MAX_PAGES || '12000', 10) });
+    await retireMissingMarketplaceJobs(walk);
+  } catch (e) { logger.error({ err: e.message }, 'workable marketplace error'); }
+  setTimeout(runWorkableMarketplace, parseInt(process.env.MARKETPLACE_PAUSE_MIN || '30', 10) * 60 * 1000);
+}
+
 function shutdown(sig) {
   shuttingDown = true;
   logger.info({ sig }, 'render-worker shutting down');
@@ -245,6 +260,7 @@ async function runSearchCanaryLoop() {
 }
 setTimeout(runSearchCanaryLoop, 3 * 60 * 1000);
 setTimeout(runDeadPrune, 8 * 60 * 1000);
+if (process.env.MARKETPLACE_WALK !== '0') setTimeout(runWorkableMarketplace, 4 * 60 * 1000);
 setTimeout(runMeiliSync, 90 * 1000);
 // demand-crawl: ensure its columns exist, then start the loop a bit after boot.
 ensureDemandColumns().catch((e) => logger.warn({ err: e.message }, 'demand ensureColumns')).finally(() => setTimeout(runDemandCrawl, 6 * 60 * 1000));
