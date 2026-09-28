@@ -3,6 +3,10 @@ const logger = require('../../logger');
 const { aliasGroup, isShortAlias } = require('../../utils/location-aliases');
 const { annualiseSalary } = require('../../utils/salary');
 
+// A job missing from this many CONSECUTIVE successful syncs of its company is retired (see the
+// absence block at the end of syncForCompany).
+const ABSENT_LIMIT = parseInt(process.env.SYNC_ABSENT_LIMIT || '3', 10);
+
 /**
  * Build WHERE clauses from filters.
  * Returns { clauses: string[], params: any[], needsJoin: boolean }
@@ -274,7 +278,7 @@ const jobsRepo = {
     return rows[0] || null;
   },
 
-  async syncForCompany(companyId, ats, incomingJobs) {
+  async syncForCompany(companyId, ats, incomingJobs, { partial = false } = {}) {
     let added = 0;
     let updated = 0;
 
@@ -298,9 +302,14 @@ const jobsRepo = {
     // docs/DATA-QUALITY-PLAN.md and the project_greenhouse_external_id_churn memory.
     // A blind list-diff would have deleted hundreds of live jobs.
     //
-    // Removal is now handled entirely by pruneDeadJobs() in
-    // src/tasks/dead-job-check.js, which only marks a job removed on an
-    // HTTP-confirmed 404/410 or an explicit "no longer available" page — never on
+    // UPDATE 2026-09-28: HTTP-verifying every missing job could not keep up. On the VPS, where this
+    // branch runs, 2.6M live jobs on successfully-crawled companies had not been seen for 3+ days.
+    // Removal is back, as main's consecutive-absence counter (end of this function): a job must be
+    // missing from ABSENT_LIMIT successful syncs IN A ROW, so one flaky response retires nothing,
+    // and an id that churned while the posting stayed live leaves only its stale duplicate behind.
+    //
+    // pruneDeadJobs() in src/tasks/dead-job-check.js still runs alongside it: it only marks a job
+    // removed on an HTTP-confirmed 404/410 or an explicit "no longer available" page — never on
     // a diff heuristic. Its eligibility query is extended to prioritize jobs whose
     // company just completed a sync that didn't touch them (see there), so the
     // "missing from latest sync" population gets verified promptly instead of
@@ -418,17 +427,68 @@ const jobsRepo = {
             remote_worldwide = CASE WHEN EXCLUDED.workplace_type IS NULL AND jobs.workplace_type IS NOT NULL
                                     THEN jobs.remote_worldwide ELSE EXCLUDED.remote_worldwide END,
             last_seen_at = datetime('now'),
+            -- Seen again, so any accumulated absence is void. This is what makes the counter
+            -- safe: a job that flickers out of one response and back into the next never
+            -- approaches the threshold, so a flaky adapter cannot retire anything.
+            absent_syncs = 0,
             removed_at = NULL`,
           params
         );
       }
     });
 
-    logger.info({ companyId, added, updated }, 'Job sync diff complete');
-    // removed is always 0 now — see the comment above. Kept in the return shape
-    // since sync.queue.js reports it in metrics/logs; a non-zero removal count
-    // will only ever come from pruneDeadJobs, not from here.
-    return { added, updated, removed: 0 };
+    // ---- Absence counting. The replacement for the list-diff removal that was ripped out.
+    //
+    // Everything the adapter returned has just had absent_syncs reset to 0 by the upsert above.
+    // So anything still live for this company with an external_id OUTSIDE the incoming set was
+    // missing from this sync — increment it. When a job has been missing from ABSENT_LIMIT
+    // consecutive successful syncs, retire it.
+    //
+    // THREE THINGS MUST BE TRUE BEFORE A SYNC IS ALLOWED TO COUNT, because the failure mode here
+    // is deleting live jobs in bulk and that is exactly what killed the previous design:
+    //
+    //   1. the adapter returned SOMETHING. An empty set is an adapter failure, never evidence
+    //      that an employer closed every job at once.
+    //   2. the caller did not flag the set as partial. Adapters that page against a hard ceiling
+    //      (amazon's 10,000-offset cap, google's bounded sweep) report meta.capped, and a
+    //      knowingly-short set must not be read as absence.
+    //   3. removal is opt-in via SYNC_ABSENCE_REMOVAL=1. Counting starts immediately and is
+    //      harmless, so the counter can be observed accumulating for days before anything is
+    //      wired to act on it. That ordering is deliberate — the numbers get checked first.
+    let removed = 0;
+    // Postgres only: absent_syncs is added under the isPostgres branch in schema.js, so on
+    // SQLite (the local dev database) the column does not exist and these statements would
+    // throw on every sync.
+    const countable = isPostgres && !partial && incomingJobs.length > 0;
+    if (countable) {
+      const incomingIds = [...new Set(incomingJobs.map((j) => j.external_id))];
+      try {
+        // `?` throughout — connection.js rewrites them to $1, $2 ... in order. Hand-writing a
+        // literal $2 alongside a ? works today but silently mis-binds the moment a placeholder
+        // is added above it.
+        await query(
+          `UPDATE jobs SET absent_syncs = absent_syncs + 1
+            WHERE company_id = ? AND removed_at IS NULL
+              AND external_id <> ALL(?::text[])`,
+          [companyId, incomingIds]
+        );
+        if (process.env.SYNC_ABSENCE_REMOVAL === '1') {
+          const { rows } = await query(
+            `UPDATE jobs SET removed_at = datetime('now')
+              WHERE company_id = ? AND removed_at IS NULL AND absent_syncs >= ?
+              RETURNING id`,
+            [companyId, ABSENT_LIMIT]
+          );
+          removed = rows.length;
+        }
+      } catch (err) {
+        // Absence accounting must never fail a sync — the jobs themselves are already committed.
+        logger.warn({ companyId, err: err.message }, 'absence counting failed (sync itself succeeded)');
+      }
+    }
+
+    logger.info({ companyId, added, updated, removed, countable }, 'Job sync diff complete');
+    return { added, updated, removed };
   },
 };
 

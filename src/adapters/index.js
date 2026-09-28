@@ -19,6 +19,7 @@ const successfactors = require('./successfactors');
 const comeet = require('./comeet');
 const paylocity = require('./paylocity');
 const teamtailor = require('./teamtailor');
+const jobvite = require('./jobvite');
 
 const adapters = {
   greenhouse,
@@ -42,6 +43,7 @@ const adapters = {
   comeet,
   paylocity,
   teamtailor,
+  jobvite,
 };
 
 function getAdapter(atsName) {
