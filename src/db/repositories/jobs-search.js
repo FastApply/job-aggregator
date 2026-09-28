@@ -16,6 +16,7 @@ const logger = require('../../logger');
 const { isShortAlias } = require('../../utils/location-aliases');
 const { resolveCountry, norm, AMBIGUOUS_COUNTRY_NAMES } = require('../../utils/location-countries');
 const { queryTokens } = require('../../utils/city-aliases');
+const { placeVariants, usStateCode } = require('../../utils/location-places');
 const { parsePostedWindow } = require('../../utils/posted-window');
 const { regionCountries, canonicalSpelling } = require('../../utils/location-regions');
 const { normalizeEmploymentType } = require('../../utils/extract');
@@ -151,8 +152,16 @@ function buildFilter(filters = {}) {
     // expanded to the city's other spellings, so "Munich" also asks for "munchen" and
     // "muenchen". Before the fold, an accented query could never match: the index held
     // "nchen" and the query asked for "münchen". See location-norm.js.
-    const [term0, ...aliases] = queryTokens(term);
-    const out = [`location_tokens = ${q(term0)}`, ...aliases.map((a) => `location_tokens = ${q(a)}`)];
+    //
+    // Each term is also widened to the names postings use for the same place (location-places.js):
+    // "New York State" -> "new york", "Delhi NCR" -> its cities, and a US state name adds its
+    // two-letter code on US-tagged postings, since "Chicago, IL" never says Illinois.
+    const out = [];
+    for (const place of placeVariants(term)) {
+      for (const t of queryTokens(place)) out.push(`location_tokens = ${q(t)}`);
+      const code = usStateCode(place);
+      if (code) out.push(`(location_tokens = ${q(code)} AND location_countries = ${q('us')})`);
+    }
     // A phrase longer than the tokeniser holds as one unit still needs the substring scan.
     // CONTAINS runs against the raw `location` field, which is NOT folded, so it gets the
     // caller's spelling as typed — "são paulo" must stay "são paulo" here.
