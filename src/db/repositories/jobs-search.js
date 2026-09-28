@@ -32,12 +32,154 @@ const toList = (v) => {
 /** Meilisearch filter strings need quotes escaped, since values are interpolated. */
 const q = (v) => `"${String(v).replace(/["\\]/g, '\\$&')}"`;
 
+// Place and country resolution for the location filter; see the long note in buildFilter.
+function clausesForPlace(term) {
+  // location_tokens is the tokenised location written at index time. Verified 2026-08-07 at
+  // 100% coverage (2,758,541 of 2,758,541 docs) before this line was switched on — filtering
+  // on an attribute the index does not carry makes Meilisearch reject the entire search,
+  // which sends every city filter to Postgres and returns 500s.
+  //
+  // Measured: exact filter ~47ms vs `location CONTAINS` at 8,589ms standalone and 12,736ms
+  // combined with the ats list the board sends on every search. CONTAINS is an unindexed
+  // substring scan and was the last operator forcing this path back onto Postgres.
+  //
+  // The term is folded the same way the tokens were written (München -> munchen) and
+  // expanded to the city's other spellings, so "Munich" also asks for "munchen" and
+  // "muenchen". Before the fold, an accented query could never match: the index held
+  // "nchen" and the query asked for "münchen". See location-norm.js.
+  //
+  // Each term is also widened to the names postings use for the same place (location-places.js):
+  // "New York State" -> "new york", "Delhi NCR" -> its cities, and a US state name adds its
+  // two-letter code on US-tagged postings, since "Chicago, IL" never says Illinois.
+  const out = [];
+  for (const place of placeVariants(term)) {
+    for (const t of queryTokens(place)) out.push(`location_tokens = ${q(t)}`);
+    const code = usStateCode(place);
+    if (code) out.push(`(location_tokens = ${q(code)} AND location_countries = ${q('us')})`);
+  }
+  // A phrase longer than the tokeniser holds as one unit still needs the substring scan.
+  // CONTAINS runs against the raw `location` field, which is NOT folded, so it gets the
+  // caller's spelling as typed — "são paulo" must stay "são paulo" here.
+  const raw = String(term).trim().toLowerCase();
+  if (raw.split(/\s+/).length > 4) out.push(`location CONTAINS ${q(raw)}`);
+  return out;
+}
+
+function resolveTerm(term) {
+  const country = resolveCountry(term);
+  if (country) return { isCountry: true, codes: [country.code], clauses: [`location_countries = ${q(country.code)}`] };
+
+  // A REGION is not a place any posting names. No job says it is in the "European Union" —
+  // it says Berlin, or Dublin. So the bloc has to become the countries inside it, which is
+  // the same indexed location_countries filter, just OR'd. Measured 2026-08-28: regions
+  // accounted for ~41,000 of the 54,652 searches still returning zero, the single largest
+  // recoverable group, and no amount of extra inventory would have fixed one of them.
+  const region = regionCountries(term);
+  if (region) return { isCountry: true, codes: region, clauses: region.map((code) => `location_countries = ${q(code)}`) };
+
+  // Local-language and misspelled names, resolved through a fixed table and then handed back
+  // to the country resolver. Nothing here is fuzzy-matched: "Georgia" is a country AND a US
+  // state, and an edit-distance guess would silently merge them.
+  const fixed = canonicalSpelling(term);
+  if (fixed) {
+    const fixedCountry = resolveCountry(fixed);
+    if (fixedCountry) return { isCountry: true, codes: [fixedCountry.code], clauses: [`location_countries = ${q(fixedCountry.code)}`] };
+    return { isCountry: false, clauses: [`location_tokens = ${q(fixed)}`] };
+  }
+
+  return { isCountry: false, clauses: clausesForPlace(term) };
+}
+
+
+// ---- Remote + a place: which countries the place is in ----------------------------------------
+//
+// A city carries no country in the query ("San Diego"), so it is looked up the only way that
+// matches what the index holds: facet location_countries over the postings the place filter
+// already selects. San Diego resolves to us; London to gb (London, Ontario is a sliver below the
+// share threshold); an ambiguous name that is really two places keeps both. The answer changes
+// only as the corpus does, so it is cached in-process.
+const PLACE_COUNTRY_TTL_MS = 6 * 3600 * 1000;
+const PLACE_MIN_POSTINGS = 20; // fewer than this is too little evidence to name a country
+const PLACE_MIN_SHARE = 0.3;
+const placeCountryCache = new Map();
+const placeKey = (term) => String(term).trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** Every comma- or pipe-separated term the caller sent as a location. */
+function locationTerms(filters) {
+  const raw = filters.location == null ? [] : Array.isArray(filters.location) ? filters.location : [filters.location];
+  return raw.flatMap((r) => String(r).split(/[,|]/)).map((t) => t.trim()).filter(Boolean);
+}
+
+/** Remote is asked for, alone or among other modes, and not already "anywhere in the world". */
+function wantsRemoteWidening(filters) {
+  if (filters.remoteWorldwide === 'true') return false;
+  return filters.remote === 'true' || toList(filters.workMode).some((m) => m.toLowerCase() === 'remote');
+}
+
+/** A term that names a place rather than a country — the ones that need a lookup. */
+const needsLookup = (term) => !resolveTerm(term).isCountry || AMBIGUOUS_COUNTRY_NAMES.has(norm(term));
+
+async function countriesForPlace(term) {
+  const key = placeKey(term);
+  const hit = placeCountryCache.get(key);
+  if (hit && Date.now() - hit.at < PLACE_COUNTRY_TTL_MS) return hit.codes;
+  // CONTAINS is an unindexed scan (seconds); the token clauses are enough to find the country.
+  const clauses = clausesForPlace(term).filter((c) => !c.includes('CONTAINS'));
+  if (!clauses.length) return [];
+  let codes = [];
+  try {
+    const res = await meili.search({ q: '', filter: `(${clauses.join(' OR ')})`, limit: 0, facets: ['location_countries'] });
+    const dist = (res && res.facetDistribution && res.facetDistribution.location_countries) || {};
+    const total = Object.values(dist).reduce((a, b) => a + b, 0);
+    if (total >= PLACE_MIN_POSTINGS) {
+      codes = Object.entries(dist).filter(([, n]) => n / total >= PLACE_MIN_SHARE)
+        .sort((a, b) => b[1] - a[1]).slice(0, 3).map(([c]) => c);
+    }
+  } catch (err) {
+    // Not cached: the next search retries. Without countries the search keeps the place as typed.
+    logger.warn({ term, err: err.message }, 'place country lookup failed — remote search not widened');
+    return [];
+  }
+  if (placeCountryCache.size >= 5000) placeCountryCache.clear();
+  placeCountryCache.set(key, { codes, at: Date.now() });
+  return codes;
+}
+
+/** filters plus `_placeCountries` ({ term: [codes] }) when a remote search names places. */
+async function withPlaceCountries(filters) {
+  if (!wantsRemoteWidening(filters)) return filters;
+  const terms = [...new Set(locationTerms(filters).filter(needsLookup))].slice(0, 6);
+  if (!terms.length) return filters;
+  const found = await Promise.all(terms.map(async (t) => [placeKey(t), await countriesForPlace(t)]));
+  return { ...filters, _placeCountries: Object.fromEntries(found) };
+}
+
+/**
+ * The countries the remote half of a search widens to, or null to leave the location as typed.
+ * Needs at least one place that resolved to a country; countries the caller named are kept.
+ */
+function remoteCountries(filters) {
+  const known = filters._placeCountries;
+  if (!known || !wantsRemoteWidening(filters)) return null;
+  const codes = new Set();
+  let fromPlace = false;
+  for (const term of locationTerms(filters)) {
+    const r = resolveTerm(term);
+    if (r.isCountry) r.codes.forEach((c) => codes.add(c));
+    const found = known[placeKey(term)];
+    if (found && found.length) { fromPlace = true; found.forEach((c) => codes.add(c)); }
+  }
+  return fromPlace && codes.size ? [...codes] : null;
+}
+
 /**
  * Build a Meilisearch filter expression from the board's filter object.
  * Returns null if any filter cannot be expressed faithfully — the caller then uses Postgres.
  */
 function buildFilter(filters = {}) {
   const parts = [];
+  let modeClause = null;
+  let modeOr = [];
 
   const modes = toList(filters.workMode).map((m) => m.toLowerCase()).filter((m) => m !== 'any');
   if (modes.length) {
@@ -55,7 +197,7 @@ function buildFilter(filters = {}) {
         or.push(`workplace_type = ${q('on_site')}`);
       }
     }
-    if (or.length) parts.push(`(${or.join(' OR ')})`);
+    if (or.length) { modeClause = `(${or.join(' OR ')})`; modeOr = or; parts.push(modeClause); }
   }
 
   const types = toList(filters.employmentType).filter((t) => t.toLowerCase() !== 'any')
@@ -138,63 +280,6 @@ function buildFilter(filters = {}) {
   // segment is always the country, everything before it is always a place, regardless of what
   // it would otherwise resolve to on its own. A pipe pair is always its own closed group too —
   // it never merges with a place term accumulated earlier in the same element.
-  const clausesForPlace = (term) => {
-    // location_tokens is the tokenised location written at index time. Verified 2026-08-07 at
-    // 100% coverage (2,758,541 of 2,758,541 docs) before this line was switched on — filtering
-    // on an attribute the index does not carry makes Meilisearch reject the entire search,
-    // which sends every city filter to Postgres and returns 500s.
-    //
-    // Measured: exact filter ~47ms vs `location CONTAINS` at 8,589ms standalone and 12,736ms
-    // combined with the ats list the board sends on every search. CONTAINS is an unindexed
-    // substring scan and was the last operator forcing this path back onto Postgres.
-    //
-    // The term is folded the same way the tokens were written (München -> munchen) and
-    // expanded to the city's other spellings, so "Munich" also asks for "munchen" and
-    // "muenchen". Before the fold, an accented query could never match: the index held
-    // "nchen" and the query asked for "münchen". See location-norm.js.
-    //
-    // Each term is also widened to the names postings use for the same place (location-places.js):
-    // "New York State" -> "new york", "Delhi NCR" -> its cities, and a US state name adds its
-    // two-letter code on US-tagged postings, since "Chicago, IL" never says Illinois.
-    const out = [];
-    for (const place of placeVariants(term)) {
-      for (const t of queryTokens(place)) out.push(`location_tokens = ${q(t)}`);
-      const code = usStateCode(place);
-      if (code) out.push(`(location_tokens = ${q(code)} AND location_countries = ${q('us')})`);
-    }
-    // A phrase longer than the tokeniser holds as one unit still needs the substring scan.
-    // CONTAINS runs against the raw `location` field, which is NOT folded, so it gets the
-    // caller's spelling as typed — "são paulo" must stay "são paulo" here.
-    const raw = String(term).trim().toLowerCase();
-    if (raw.split(/\s+/).length > 4) out.push(`location CONTAINS ${q(raw)}`);
-    return out;
-  };
-
-  const resolveTerm = (term) => {
-    const country = resolveCountry(term);
-    if (country) return { isCountry: true, codes: [country.code], clauses: [`location_countries = ${q(country.code)}`] };
-
-    // A REGION is not a place any posting names. No job says it is in the "European Union" —
-    // it says Berlin, or Dublin. So the bloc has to become the countries inside it, which is
-    // the same indexed location_countries filter, just OR'd. Measured 2026-08-28: regions
-    // accounted for ~41,000 of the 54,652 searches still returning zero, the single largest
-    // recoverable group, and no amount of extra inventory would have fixed one of them.
-    const region = regionCountries(term);
-    if (region) return { isCountry: true, codes: region, clauses: region.map((code) => `location_countries = ${q(code)}`) };
-
-    // Local-language and misspelled names, resolved through a fixed table and then handed back
-    // to the country resolver. Nothing here is fuzzy-matched: "Georgia" is a country AND a US
-    // state, and an edit-distance guess would silently merge them.
-    const fixed = canonicalSpelling(term);
-    if (fixed) {
-      const fixedCountry = resolveCountry(fixed);
-      if (fixedCountry) return { isCountry: true, codes: [fixedCountry.code], clauses: [`location_countries = ${q(fixedCountry.code)}`] };
-      return { isCountry: false, clauses: [`location_tokens = ${q(fixed)}`] };
-    }
-
-    return { isCountry: false, clauses: clausesForPlace(term) };
-  };
-
   // One closed group (accumulated place terms, optionally closed by a country) -> its filter
   // piece: an AND of the places (OR'd among themselves) and the country (OR'd among itself, in
   // case it resolved to a region), or whichever half is present.
@@ -291,7 +376,25 @@ function buildFilter(filters = {}) {
   const rawLocations = filters.location == null ? []
     : Array.isArray(filters.location) ? filters.location : [filters.location];
   const groups = rawLocations.flatMap((raw) => (String(raw).trim() ? groupsForElement(raw) : []));
-  if (groups.length) parts.push(`(${groups.join(' OR ')})`);
+  if (groups.length) {
+    const locClause = `(${groups.join(' OR ')})`;
+    const widen = remoteCountries(filters);
+    if (!widen) parts.push(locClause);
+    else {
+      // REMOTE + A PLACE. FastApply's form makes Locations required and Remote a work mode, so a
+      // remote seeker always names a place too — and means "remote jobs I can do from here". A
+      // remote posting names its country ("Remote - US"), not the seeker's city, so AND-ing the
+      // city onto is_remote left "San Diego + Remote" with 1 result against 161 for the US
+      // (live, 2026-09-28). For the remote half only, the place widens to the countries it is in,
+      // plus postings open worldwide. Hybrid and on-site keep the place as typed: those jobs
+      // really are somewhere.
+      const remoteLoc = `(${[...groups, ...widen.map((c) => `location_countries = ${q(c)}`), 'remote_worldwide = true'].join(' OR ')})`;
+      const others = modeOr.filter((c) => c !== 'is_remote = true');
+      if (modeClause) parts.splice(parts.indexOf(modeClause), 1);
+      if (filters.remote === 'true' || !others.length) parts.push(`(is_remote = true AND ${remoteLoc})`);
+      else parts.push(`((is_remote = true AND ${remoteLoc}) OR ((${others.join(' OR ')}) AND ${locClause}))`);
+    }
+  }
 
   if (filters.posted) {
     // Same shared parser as the SQL path. This used to carry its own copy of the regex, so a
@@ -518,6 +621,7 @@ async function search(filters = {}) {
 
 
 
+  filters = await withPlaceCountries(filters);
   const built = buildFilter(filters);
   if (!built) {
     // The other silent fallback: a filter set the index cannot express faithfully. Same cost as
@@ -722,4 +826,5 @@ async function facets() {
 module.exports = {
   search, facets, buildFilter, buildQuery, splitRoles, interleaveByRole, mergeFacets,
   MAX_ROLES, COUNT_CAP,
+  _withPlaceCountries: withPlaceCountries, // exported for tests
 };
