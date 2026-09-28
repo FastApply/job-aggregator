@@ -154,6 +154,45 @@ function extractSalary(text) {
 // those.
 const LOCATION_IS_GLOBAL = /^\s*(remote\s*[-–—:]?\s*)?(global|worldwide|anywhere)(\s+(anywhere|global|remote))?\s*$/i;
 
+// Non-English work-model wording. The English rules below read "remote" and "hybrid" and nothing
+// else, so a German, Italian, French, Spanish or Dutch posting stayed untagged -- or, worse, a
+// German "Remote-Arbeit und Präsenztage" (remote work AND office days) read as fully remote.
+// Measured on "scrum master / agile coach" in Germany + Italy, 2026-09-28: 48 postings, every one
+// hybrid or on-site by its own text ("flexible Arbeitszeiten im Homeoffice und Büro", "smart
+// working – hybrid"), 5 untagged and 1 tagged on-site against its text.
+//
+// Fully remote, in so many words, in the other languages. Checked first: these are unambiguous.
+// English "100% remote" is left to the English rules below, which also see "not able to offer a
+// permanent 100% remote option" next to "hybrid arrangement" and correctly call it hybrid.
+const FULL_REMOTE_INTL = new RegExp([
+  '100\\s?%\\s?(?:homeoffice|home-office|mobil|télétravail|teletravail|teletrabajo|remoto|da remoto|thuiswerk)',
+  '(?:vollständig|vollstaendig|komplett|ausschließlich|ausschliesslich|voll)\\s+(?:remote|im homeoffice|aus dem homeoffice)',
+  '(?:completamente|totalmente|interamente)\\s+(?:da\\s+)?remoto',
+  'remoto\\s+al\\s+100',
+  'full\\s+télétravail|télétravail\\s+(?:complet|total|à\\s*100)',
+  'teletrabajo\\s+(?:completo|total|100)',
+  'volledig\\s+(?:remote|thuis)',
+].join('|'), 'i');
+// Explicitly hybrid: the word in any of these languages, office days named alongside home
+// working, or remote days counted per week. The German and Dutch inflected forms count only next to
+// a work word: "hybride Hotellerie" and "einem hybriden System" are about hotels and software. English wording is deliberately absent beyond the
+// word "hybrid" itself -- measured on a 29k live sample, "home office" is as often a US company's
+// headquarters ("our home office in Louisville"), a stipend or an insurance product, and "3 days
+// per week" as often a shift pattern, as a work model. \b on both ends of "hybrid": Word-exported
+// HTML carries "hybridMultilevel" in its list markup.
+const HYBRID_INTL = new RegExp([
+  '\\bhybrid\\b', '\\bhybride[nrs]?\\s+(?:arbeit\\w*|modell\\w*|werken|work\\w*|model|arbeitsmodell|arbeitsweise)', '\\bwerkplek:?\\s*hybride\\b', '\\bibrid[oa]\\b', '\\bh[ií]brid[oa]\\b', '\\bsmart[\\s-]?working\\b',
+  '\\blavoro agile\\b', '\\bdeels thuis\\b', // A few office days a quarter or a year is a remote job with meetups, not hybrid.
+  'pr(?:ä|ae)senz(?:tag|zeit)(?:e|en)?\\b(?!\\s+(?:pro|im|per|je)\\s+(?:quartal|jahr|halbjahr))',
+  '\\b(?:homeoffice|home-office|mobil(?:es|em)? arbeiten)\\b.{0,60}\\b(?:büro|buero|vor ort|standort)',
+  '\\b(?:büro|buero|vor ort)\\b.{0,60}\\b(?:homeoffice|home-office|mobil(?:es|em)? arbeiten)\\b',
+  '\\b[1-4]\\s*(?:tag|tage|giorn[oi]|jours?|d[ií]as?)\\s*(?:\\/|pro|in der|a|alla|par|por|a la)\\s*(?:woche|settimana|semaine|semana)\\b',
+].join('|'), 'i');
+// Home working offered without saying how much of it. Read as hybrid only when nothing else in the
+// text says remote -- "Homeoffice" in a fully remote German posting must not demote it. The German
+// one-word spelling only: the English "home office" is usually a headquarters (see above).
+const HOME_WORK_INTL = /\bhomeoffice\b|\bhome-office\b(?=.{0,30}\b(?:möglich|tage?|anteil|regelung|option)\b)|\bmobil(?:es|em)?\s+arbeiten\b|\btélétravail\b|\bteletravail\b|\bteletrabajo\b|\bthuiswerk(?:en)?\b|\blavoro da remoto\b/i;
+
 function extractWorkplaceType(title, location, description) {
   // Checked BEFORE the combined blob below, which is the bug this guards.
   //
@@ -172,11 +211,15 @@ function extractWorkplaceType(title, location, description) {
 
   const fields = [title, location, description].filter(Boolean).join(' ').toLowerCase();
 
+  // Unless hybrid is named too: "hasta 20 días al año de trabajo 100% remoto" is a perk on a hybrid
+  // job, and "ob voll remote oder in einem unserer Büros" offers a choice.
+  if (FULL_REMOTE_INTL.test(fields) && !HYBRID_INTL.test(fields)) return 'remote';
   if (/\bremote\b|\bwork from home\b|\bwfh\b|\bfully remote\b|\b100% remote\b/.test(fields)) {
-    if (/\bhybrid\b/.test(fields)) return 'hybrid';
+    if (HYBRID_INTL.test(fields)) return 'hybrid';
     return 'remote';
   }
-  if (/\bhybrid\b|\bflex\s*office\b|\bpartially remote\b/.test(fields)) return 'hybrid';
+  if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || HYBRID_INTL.test(fields)) return 'hybrid';
+  if (HOME_WORK_INTL.test(fields)) return 'hybrid';
   if (/\bon-site\b|\bonsite\b|\bin-office\b|\bin office\b|\bon site\b/.test(fields)) return 'onsite';
 
   return null;

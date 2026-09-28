@@ -11,6 +11,9 @@ const { parseOracleUrl, oracleDetailUrl } = require('../utils/oracle-url');
 const { fetchUnlockedHtml } = require('../utils/brightdata-proxy');
 const logger = require('../logger');
 const metrics = require('../utils/metrics');
+const { stripHtml } = require('../utils/html');
+const { extractWorkplaceType } = require('../utils/extract');
+const { classifyJob } = require('../utils/classify');
 
 // Only ATS platforms that return descriptions without Browserless.
 // Priority order: Ashby, Breezy, Greenhouse, Workable first, then rest.
@@ -1400,6 +1403,29 @@ async function fetchPublicHtml(url, { headers, timeoutMs = 15000, maxRedirects =
 }
 
 /**
+ * Tag the work model from a description that arrived after the crawl.
+ *
+ * The crawl tags workplace_type from the description it is handed, but Workday, Personio and
+ * SmartRecruiters list responses carry none, so those jobs were tagged from title + location alone
+ * and nearly all stayed untagged — invisible to a hybrid or on-site search, and a remote posting
+ * that only says so in its text never became is_remote. Only an untagged row is touched: a tag the
+ * ATS itself sent outranks a reading of the prose. Best-effort; the description is already saved.
+ */
+async function tagWorkplaceFromDescription(job, description) {
+  if (job.workplace_type || job.title == null) return;
+  try {
+    const plain = stripHtml(description);
+    const workplace = extractWorkplaceType(job.title, job.location, plain);
+    if (!workplace) return;
+    const tags = classifyJob({ title: job.title, location: job.location, workplace_type: workplace, description: plain });
+    await query('UPDATE jobs SET workplace_type = ?, is_remote = ?, remote_worldwide = ? WHERE id = ? AND workplace_type IS NULL',
+      [workplace, tags.is_remote, tags.remote_worldwide, job.id]);
+  } catch (err) {
+    logger.debug({ jobId: job.id, err: err.message }, 'workplace tag from description failed');
+  }
+}
+
+/**
  * Process a single job — fetch description and update DB.
  * Returns 'filled' or 'failed'.
  */
@@ -1413,6 +1439,7 @@ async function processJob(job, ats, failures) {
     }
     if (description) {
       await query('UPDATE jobs SET description = ? WHERE id = ?', [description, job.id]);
+      await tagWorkplaceFromDescription(job, description);
       metrics.increment(`backfill.filled.${ats}`);
       return 'filled';
     } else {
@@ -1530,7 +1557,7 @@ async function scanCandidates(ats, batchSize) {
     const partClause = pMod > 1 ? 'AND j.id % ? = ?' : '';
     const partParams = pMod > 1 ? [pMod, pRem] : [];
     ({ rows: jobs } = await query(
-      `SELECT j.id, j.ats, j.external_id, j.url, j.raw_data, j.company_id,
+      `SELECT j.id, j.ats, j.external_id, j.url, j.raw_data, j.company_id, j.title, j.location, j.workplace_type,
               c.ats_slug, c.company_name, c.domain
        FROM jobs j JOIN companies c ON j.company_id = c.id
        WHERE j.removed_at IS NULL
