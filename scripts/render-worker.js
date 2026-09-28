@@ -222,9 +222,9 @@ async function runHealthCheck() {
 }
 
 // --- Workable marketplace: jobs.workable.com, ~170k postings, no per-company crawl ---
-// Each cycle: walk the newest 400 pages (the most the search serves: ~8,000 jobs, ~2.5 days of
-// postings) to pick up new jobs and refresh recent ones, then look up ~1h worth of older jobs one
-// by one and retire the ones Workable answers 410 for. Ran on a Mac until 2026-09-28, writing to
+// Each ~hourly cycle: walk the newest 25 pages (500 jobs; ~3,000 are posted a day) to pick up new
+// jobs, then look up ~550 older ones one by one and retire those Workable answers 410 for. All at
+// the shared 6s pace the host's rate limit allows (see crawl-workable-marketplace.js). Ran on a Mac until 2026-09-28, writing to
 // the local database, and the promotion that copied it here carried only NEW rows — so production
 // never learned a job was still live or had closed. MARKETPLACE_WALK=0 turns it off.
 async function runWorkableMarketplace() {
@@ -232,8 +232,9 @@ async function runWorkableMarketplace() {
   const { crawlWorkableMarketplace, verifyMarketplaceJobs } = require('../src/tasks/crawl-workable-marketplace');
   let backedOff = false;
   try {
-    await crawlWorkableMarketplace({ maxPages: parseInt(process.env.MARKETPLACE_MAX_PAGES || '400', 10) });
-    ({ backedOff } = await verifyMarketplaceJobs());
+    const walk = await crawlWorkableMarketplace({ maxPages: parseInt(process.env.MARKETPLACE_MAX_PAGES || '25', 10) });
+    if (walk.rateLimited) backedOff = true;
+    else ({ backedOff } = await verifyMarketplaceJobs());
   } catch (e) { logger.error({ err: e.message }, 'workable marketplace error'); }
   // Rate limited: give Workable a long break before the next cycle.
   const pauseMin = backedOff ? 60 : parseInt(process.env.MARKETPLACE_PAUSE_MIN || '5', 10);

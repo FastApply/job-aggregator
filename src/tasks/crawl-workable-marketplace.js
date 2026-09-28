@@ -13,7 +13,11 @@ const JOBS_PER_PAGE = 20; // API returns 20 per page
 // Heroku worker uses the default (500 pages = 10k latest/cycle). A deep local run
 // can set MARKETPLACE_MAX_PAGES much higher to walk the full ~170k marketplace.
 const MAX_PAGES_PER_CYCLE = parseInt(process.env.MARKETPLACE_MAX_PAGES, 10) || 500;
-const PAGING_CAP = 400; // jobs.workable.com serves at most 400 pages of any one search
+// jobs.workable.com rate-limits by IP: on 2026-09-28 a walk at 1 page/s was answered 429 after
+// ~400 requests, and the host kept refusing for over 30 minutes. Every call to it (walk pages and
+// per-job lookups) is therefore spaced by MARKETPLACE_DELAY_MS, ~600/hour by default, and any 429
+// ends the cycle and parks it for an hour.
+const MKT_DELAY_MS = parseInt(process.env.MARKETPLACE_DELAY_MS || '6000', 10);
 
 function mapEmploymentType(type) {
   if (!type) return null;
@@ -148,7 +152,7 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
   const startedAt = new Date();
   let totalSize = null;
   let complete = false;
-  let capReached = false;
+  let rateLimited = false;
 
   let pageToken = null;
   let totalProcessed = 0;
@@ -168,9 +172,8 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
       for (let attempt = 1; attempt <= 6; attempt++) {
         try {
           const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-          // The search stops paging after 400 pages (8,000 jobs) and answers the 401st with 429.
-          // That is the end of what a walk can reach, not a rate limit worth retrying.
-          if (res.status === 429 && pagesProcessed >= PAGING_CAP) { capReached = true; break; }
+          // Rate limited: stop now. Retrying only extends the block (see MKT_DELAY_MS).
+          if (res.status === 429) { rateLimited = true; break; }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           data = await res.json();
           break;
@@ -179,7 +182,7 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
           else { await new Promise(r => setTimeout(r, 3000 * attempt)); }
         }
       }
-      if (capReached || !data) break;
+      if (rateLimited || !data) break;
       if (totalSize == null && Number.isFinite(data.totalSize)) totalSize = data.totalSize;
       const jobs = data.jobs || [];
 
@@ -213,8 +216,7 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
         break;
       }
 
-      // Delay to avoid 429 rate limits (1 second between pages)
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, MKT_DELAY_MS));
     }
   } catch (err) {
     logger.error({ err: err.message }, 'Workable marketplace crawl error');
@@ -226,25 +228,25 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
     totalAdded,
     totalSize,
     complete,
-    capReached,
+    rateLimited,
     companiesCached: companyCache.size,
   }, 'Workable marketplace crawl: complete');
 
-  return { added: totalAdded, processed: totalProcessed, totalSize, complete, capReached, startedAt };
+  return { added: totalAdded, processed: totalProcessed, totalSize, complete, rateLimited, startedAt };
 }
 
 // ---- Liveness: ask Workable about each job the walk no longer reaches -------------------------
 //
-// The marketplace search stops paging at 400 pages (8,000 jobs; the 401st answers 429), so a walk
-// only ever sees the newest ~2.5 days of postings and can never prove an older job is gone. The
+// A walk reads only the newest postings (the host's rate limit allows a few hundred requests an
+// hour, and ~3,000 jobs are posted a day), so it can never prove an older job is gone. The
 // per-job endpoint can: /api/v1/jobs/<id> answers 200 with state "published" for a live job and
 // 410 Gone for a closed one (verified 2026-09-28 on jobs last seen in June). So every marketplace
-// job the walks have not touched for VERIFY_AFTER_HOURS is looked up, oldest first, and retired
+// job the walks have not touched for VERIFY_AFTER_HOURS is looked up, oldest first, at the shared
+// MKT_DELAY_MS pace, and retired
 // only on a 410. Nothing retired these before: dead-job-check needs a per-company crawl, and on
 // 2026-09-28 144,740 of 145,733 live marketplace jobs had not been seen for 7+ days.
 const VERIFY_AFTER_HOURS = parseInt(process.env.MARKETPLACE_VERIFY_AFTER_HOURS || '48', 10);
-const VERIFY_BATCH = parseInt(process.env.MARKETPLACE_VERIFY_BATCH || '3600', 10);
-const VERIFY_DELAY_MS = parseInt(process.env.MARKETPLACE_VERIFY_DELAY_MS || '1000', 10);
+const VERIFY_BATCH = parseInt(process.env.MARKETPLACE_VERIFY_BATCH || '550', 10);
 
 /** Pure. What a per-job lookup's answer means for the stored job. */
 function livenessAction(status, body) {
@@ -254,7 +256,7 @@ function livenessAction(status, body) {
   return 'unknown'; // 404, 5xx, network: decide nothing, try again another run
 }
 
-async function verifyMarketplaceJobs({ limit = VERIFY_BATCH, delayMs = VERIFY_DELAY_MS } = {}) {
+async function verifyMarketplaceJobs({ limit = VERIFY_BATCH, delayMs = MKT_DELAY_MS } = {}) {
   const { rows } = await query(
     `SELECT id, external_id FROM jobs
       WHERE ats = 'workable' AND external_id LIKE 'workable_mkt_%' AND removed_at IS NULL
