@@ -222,18 +222,22 @@ async function runHealthCheck() {
 }
 
 // --- Workable marketplace: jobs.workable.com, ~170k postings, no per-company crawl ---
-// Walks the whole marketplace, then retires what no walk has seen for a day, then waits and walks
-// again. Ran on a Mac until 2026-09-28, writing to the local database, and the promotion that
-// copied it here carried only NEW rows — so production never learned a job was still live or had
-// closed. MARKETPLACE_WALK=0 turns it off; a full walk is ~8,500 pages at 1s each (~2.5h).
+// Each cycle: walk the newest 400 pages (the most the search serves: ~8,000 jobs, ~2.5 days of
+// postings) to pick up new jobs and refresh recent ones, then look up ~1h worth of older jobs one
+// by one and retire the ones Workable answers 410 for. Ran on a Mac until 2026-09-28, writing to
+// the local database, and the promotion that copied it here carried only NEW rows — so production
+// never learned a job was still live or had closed. MARKETPLACE_WALK=0 turns it off.
 async function runWorkableMarketplace() {
   if (shuttingDown) return;
-  const { crawlWorkableMarketplace, retireMissingMarketplaceJobs } = require('../src/tasks/crawl-workable-marketplace');
+  const { crawlWorkableMarketplace, verifyMarketplaceJobs } = require('../src/tasks/crawl-workable-marketplace');
+  let backedOff = false;
   try {
-    const walk = await crawlWorkableMarketplace({ maxPages: parseInt(process.env.MARKETPLACE_MAX_PAGES || '12000', 10) });
-    await retireMissingMarketplaceJobs(walk);
+    await crawlWorkableMarketplace({ maxPages: parseInt(process.env.MARKETPLACE_MAX_PAGES || '400', 10) });
+    ({ backedOff } = await verifyMarketplaceJobs());
   } catch (e) { logger.error({ err: e.message }, 'workable marketplace error'); }
-  setTimeout(runWorkableMarketplace, parseInt(process.env.MARKETPLACE_PAUSE_MIN || '30', 10) * 60 * 1000);
+  // Rate limited: give Workable a long break before the next cycle.
+  const pauseMin = backedOff ? 60 : parseInt(process.env.MARKETPLACE_PAUSE_MIN || '5', 10);
+  setTimeout(runWorkableMarketplace, pauseMin * 60 * 1000);
 }
 
 function shutdown(sig) {

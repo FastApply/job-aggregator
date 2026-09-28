@@ -13,6 +13,7 @@ const JOBS_PER_PAGE = 20; // API returns 20 per page
 // Heroku worker uses the default (500 pages = 10k latest/cycle). A deep local run
 // can set MARKETPLACE_MAX_PAGES much higher to walk the full ~170k marketplace.
 const MAX_PAGES_PER_CYCLE = parseInt(process.env.MARKETPLACE_MAX_PAGES, 10) || 500;
+const PAGING_CAP = 400; // jobs.workable.com serves at most 400 pages of any one search
 
 function mapEmploymentType(type) {
   if (!type) return null;
@@ -147,6 +148,7 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
   const startedAt = new Date();
   let totalSize = null;
   let complete = false;
+  let capReached = false;
 
   let pageToken = null;
   let totalProcessed = 0;
@@ -166,6 +168,9 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
       for (let attempt = 1; attempt <= 6; attempt++) {
         try {
           const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          // The search stops paging after 400 pages (8,000 jobs) and answers the 401st with 429.
+          // That is the end of what a walk can reach, not a rate limit worth retrying.
+          if (res.status === 429 && pagesProcessed >= PAGING_CAP) { capReached = true; break; }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           data = await res.json();
           break;
@@ -174,7 +179,7 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
           else { await new Promise(r => setTimeout(r, 3000 * attempt)); }
         }
       }
-      if (!data) break;
+      if (capReached || !data) break;
       if (totalSize == null && Number.isFinite(data.totalSize)) totalSize = data.totalSize;
       const jobs = data.jobs || [];
 
@@ -221,65 +226,67 @@ async function crawlWorkableMarketplace({ maxPages = MAX_PAGES_PER_CYCLE } = {})
     totalAdded,
     totalSize,
     complete,
+    capReached,
     companiesCached: companyCache.size,
   }, 'Workable marketplace crawl: complete');
 
-  return { added: totalAdded, processed: totalProcessed, totalSize, complete, startedAt };
+  return { added: totalAdded, processed: totalProcessed, totalSize, complete, capReached, startedAt };
 }
 
-// A walk must cover this share of what the API said it held before its absences mean anything.
-const RETIRE_MIN_COVERAGE = parseFloat(process.env.MARKETPLACE_RETIRE_MIN_COVERAGE || '0.9');
-// ...and a job must have been missing this long, i.e. from every walk in that window, so one bad
-// page or a job briefly unlisted is never enough.
-const RETIRE_GRACE_HOURS = parseInt(process.env.MARKETPLACE_RETIRE_GRACE_HOURS || '24', 10);
-const RETIRE_CHUNK = 5000;
-const RETIRE_MAX_OUTBOX = parseInt(process.env.MARKETPLACE_RETIRE_MAX_OUTBOX || '20000', 10);
+// ---- Liveness: ask Workable about each job the walk no longer reaches -------------------------
+//
+// The marketplace search stops paging at 400 pages (8,000 jobs; the 401st answers 429), so a walk
+// only ever sees the newest ~2.5 days of postings and can never prove an older job is gone. The
+// per-job endpoint can: /api/v1/jobs/<id> answers 200 with state "published" for a live job and
+// 410 Gone for a closed one (verified 2026-09-28 on jobs last seen in June). So every marketplace
+// job the walks have not touched for VERIFY_AFTER_HOURS is looked up, oldest first, and retired
+// only on a 410. Nothing retired these before: dead-job-check needs a per-company crawl, and on
+// 2026-09-28 144,740 of 145,733 live marketplace jobs had not been seen for 7+ days.
+const VERIFY_AFTER_HOURS = parseInt(process.env.MARKETPLACE_VERIFY_AFTER_HOURS || '48', 10);
+const VERIFY_BATCH = parseInt(process.env.MARKETPLACE_VERIFY_BATCH || '3600', 10);
+const VERIFY_DELAY_MS = parseInt(process.env.MARKETPLACE_VERIFY_DELAY_MS || '1000', 10);
 
-/** Pure. May this walk's absences retire jobs, and if not, why. */
-function retirementVerdict(walk) {
-  if (!walk || !walk.complete) return { ok: false, reason: 'walk did not reach the end of the marketplace' };
-  if (!walk.totalSize) return { ok: false, reason: 'the API reported no total to check coverage against' };
-  const coverage = walk.processed / walk.totalSize;
-  if (coverage < RETIRE_MIN_COVERAGE) return { ok: false, reason: `walk saw ${(coverage * 100).toFixed(1)}% of the ${walk.totalSize} listed` };
-  return { ok: true };
+/** Pure. What a per-job lookup's answer means for the stored job. */
+function livenessAction(status, body) {
+  if (status === 410) return 'retire';
+  if (status === 200) return body && body.state && body.state !== 'published' ? 'retire' : 'alive';
+  if (status === 429) return 'back-off';
+  return 'unknown'; // 404, 5xx, network: decide nothing, try again another run
 }
 
-/**
- * Retire marketplace jobs no complete walk has seen for RETIRE_GRACE_HOURS.
- *
- * Nothing retired these before: dead-job-check retires a job its company's crawl stopped seeing,
- * and marketplace companies are never crawled company-by-company. By 2026-09-28, 144,740 of
- * 145,733 live marketplace jobs had not been seen for 7+ days, some since June — closed postings
- * still offered to users and to First Apply. Soft delete: removed_at, which the index trigger
- * turns into a search removal. Chunked and paused on outbox depth like the other bulk updates.
- */
-async function retireMissingMarketplaceJobs(walk) {
-  const verdict = retirementVerdict(walk);
-  if (!verdict.ok) {
-    logger.warn({ reason: verdict.reason }, 'Workable marketplace: retirement skipped');
-    return 0;
+async function verifyMarketplaceJobs({ limit = VERIFY_BATCH, delayMs = VERIFY_DELAY_MS } = {}) {
+  const { rows } = await query(
+    `SELECT id, external_id FROM jobs
+      WHERE ats = 'workable' AND external_id LIKE 'workable_mkt_%' AND removed_at IS NULL
+        AND last_seen_at < NOW() - INTERVAL '${VERIFY_AFTER_HOURS} hours'
+      ORDER BY last_seen_at ASC LIMIT ${parseInt(limit, 10)}`);
+  const tally = { checked: 0, alive: 0, retired: 0, unknown: 0, backedOff: false };
+  for (const row of rows) {
+    const id = row.external_id.slice('workable_mkt_'.length);
+    let status = 0, body = null;
+    try {
+      const res = await fetch(`${API_BASE}/jobs/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(20000) });
+      status = res.status;
+      if (status === 200) body = await res.json().catch(() => null);
+    } catch { status = 0; }
+    const action = livenessAction(status, body);
+    tally.checked++;
+    if (action === 'back-off') { tally.backedOff = true; break; }
+    if (action === 'retire') {
+      await query('UPDATE jobs SET removed_at = NOW() WHERE id = ? AND removed_at IS NULL', [row.id]);
+      tally.retired++;
+    } else if (action === 'alive') {
+      // Only last_seen_at: not an indexed field, so this costs the search index nothing.
+      await query('UPDATE jobs SET last_seen_at = NOW() WHERE id = ?', [row.id]);
+      tally.alive++;
+    } else tally.unknown++;
+    await new Promise((r) => setTimeout(r, delayMs));
   }
-  const cutoff = new Date(walk.startedAt.getTime() - RETIRE_GRACE_HOURS * 3600 * 1000);
-  let retired = 0;
-  for (;;) {
-    const { rows: [o] } = await query('SELECT COUNT(*)::int n FROM jobs WHERE index_dirty_at IS NOT NULL');
-    if (o.n >= RETIRE_MAX_OUTBOX) { await new Promise((r) => setTimeout(r, 20000)); continue; }
-    const r = await query(
-      `UPDATE jobs SET removed_at = NOW()
-        WHERE id IN (SELECT id FROM jobs
-                      WHERE ats = 'workable' AND external_id LIKE 'workable_mkt_%'
-                        AND removed_at IS NULL AND last_seen_at < ?
-                      LIMIT ${RETIRE_CHUNK})`,
-      [cutoff.toISOString()]);
-    const n = r.rowCount || 0;
-    retired += n;
-    if (n < RETIRE_CHUNK) break;
-  }
-  logger.info({ retired, cutoff: cutoff.toISOString() }, 'Workable marketplace: retired jobs no longer listed');
-  return retired;
+  logger.info({ ...tally, candidates: rows.length }, 'Workable marketplace: liveness check');
+  return tally;
 }
 
-module.exports = { crawlWorkableMarketplace, retireMissingMarketplaceJobs, retirementVerdict };
+module.exports = { crawlWorkableMarketplace, verifyMarketplaceJobs, livenessAction };
 
 // Standalone deep run: MARKETPLACE_MAX_PAGES=8500 walks the full ~170k marketplace.
 if (require.main === module) {
