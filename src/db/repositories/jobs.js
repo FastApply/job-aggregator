@@ -374,7 +374,10 @@ const jobsRepo = {
             title = EXCLUDED.title,
             department = EXCLUDED.department,
             location = EXCLUDED.location,
-            workplace_type = EXCLUDED.workplace_type,
+            -- COALESCE for the same reason as salary below: Workday, Personio and SmartRecruiters
+            -- list responses carry no description, so their crawl sends NULL here every sync and
+            -- would erase the tag backfill-descriptions read from the description afterwards.
+            workplace_type = COALESCE(EXCLUDED.workplace_type, jobs.workplace_type),
             employment_type = EXCLUDED.employment_type,
             -- COALESCE, not a plain overwrite. Several ATS (paylocity, workable, ...) carry
             -- no salary in the list response, so the adapter passes NULL every sync — an
@@ -408,8 +411,12 @@ const jobsRepo = {
                             THEN EXCLUDED.raw_data ELSE jobs.raw_data END,
             visa_sponsorship = CASE WHEN EXCLUDED.visa_sponsorship != '' THEN EXCLUDED.visa_sponsorship ELSE jobs.visa_sponsorship END,
             experience_level = CASE WHEN EXCLUDED.experience_level != '' THEN EXCLUDED.experience_level ELSE jobs.experience_level END,
-            is_remote = EXCLUDED.is_remote,
-            remote_worldwide = EXCLUDED.remote_worldwide,
+            -- Derived from workplace_type, so they are kept together with it: a crawl that could
+            -- not tag the job must not reset the flags read from its description.
+            is_remote = CASE WHEN EXCLUDED.workplace_type IS NULL AND jobs.workplace_type IS NOT NULL
+                             THEN jobs.is_remote ELSE EXCLUDED.is_remote END,
+            remote_worldwide = CASE WHEN EXCLUDED.workplace_type IS NULL AND jobs.workplace_type IS NOT NULL
+                                    THEN jobs.remote_worldwide ELSE EXCLUDED.remote_worldwide END,
             last_seen_at = datetime('now'),
             removed_at = NULL`,
           params
