@@ -49,7 +49,7 @@ test('an ambiguous country name stays over-inclusive rather than returning nothi
   // "Atlanta, Georgia" into `atlanta AND country=ge` — an AND that can never match, so a real
   // search returns zero. Dual-emit keeps the country group AND the plain place terms.
   const f = filterFor('Atlanta, Georgia');
-  assert.equal(f, '((location_countries = "ge") OR (location_tokens = "atlanta" OR location_tokens = "georgia"))');
+  assert.equal(f, '((location_countries = "ge") OR (location_tokens = "atlanta" OR location_tokens = "georgia" OR (location_tokens = "ga" AND location_countries = "us")))');
   assert.match(f, / OR /, 'must stay an OR: an AND here is the zero-result failure');
 });
 
