@@ -227,6 +227,7 @@ async function fetchJobs(clientname, { careerUrl } = {}) {
   if (sites.length > 1) {
     const merged = new Map();
     let meta = null;
+    let anyCapped = false;
     const failures = [];
 
     for (const site of sites) {
@@ -236,6 +237,7 @@ async function fetchJobs(clientname, { careerUrl } = {}) {
           if (!merged.has(job.external_id)) merged.set(job.external_id, job);
         }
         if (!meta) meta = res.meta;
+        if (res.meta && res.meta.capped) anyCapped = true;
       } catch (err) {
         failures.push(`${site}: ${err.message}`);
       }
@@ -249,7 +251,9 @@ async function fetchJobs(clientname, { careerUrl } = {}) {
     }
     logger.info({ slug: clientname, wdNum, sites: sites.length, fetched: merged.size },
       'Workday multi-site fetch complete');
-    return { jobs: [...merged.values()], meta: meta || {} };
+    // A failed or truncated site leaves part of the company out of `merged`; the absence counter
+    // must not read those jobs as closed (see syncForCompany).
+    return { jobs: [...merged.values()], meta: { ...(meta || {}), capped: anyCapped || failures.length > 0 } };
   }
 
   return fetchSiteJobs(clientname, wdNum, sites[0]);
@@ -345,7 +349,15 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
 
   const logoUrl = `https://${clientname}.wd${wdNum}.myworkdayjobs.com/${siteSlug}/assets/logo`;
 
-  return { jobs, meta: { companyName, logoUrl } };
+  // Short of what Workday says the site holds — the 5,000 paging ceiling above, or a total that grew
+  // mid-crawl. Flagged so the absence counter does not retire the jobs this crawl could not reach:
+  // a completed crawl of oreillyauto (18,895 listed) would otherwise have counted 13,895 live jobs
+  // missing on every sync and retired them after three.
+  const listed = Number(firstData.total);
+  const capped = Number.isFinite(listed) && listed > postings.length;
+  if (capped) logger.info({ slug: clientname, siteSlug, listed, collected: postings.length }, 'Workday: site larger than one crawl collects — marked partial');
+
+  return { jobs, meta: { companyName, logoUrl, capped } };
 }
 
 module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT };
