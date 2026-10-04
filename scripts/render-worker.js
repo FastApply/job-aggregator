@@ -19,7 +19,9 @@
 // Keep demand-crawl's per-cycle memory small on the 512MB box (it shares the parent process
 // with the maintenance loops). MUST be set before requiring demand-crawl, which reads these
 // at module load. Smaller page/batch => fewer job objects in flight => no parent-heap OOM.
-process.env.DEMAND_BATCH = process.env.DEMAND_BATCH || '12';
+// 48, up from 12: 12 was sized for the 512MB Render box. On the VPS memory is not the limit, and
+// with only LiftMyCV left (no 30s Jobhose timeouts) a demand takes seconds, not a minute.
+process.env.DEMAND_BATCH = process.env.DEMAND_BATCH || '48';
 process.env.DEMAND_PAGE_SIZE = process.env.DEMAND_PAGE_SIZE || '40';
 process.env.DEMAND_MAX_TITLES = process.env.DEMAND_MAX_TITLES || '2';
 process.env.DEMAND_MAX_LOCATIONS = process.env.DEMAND_MAX_LOCATIONS || '2';

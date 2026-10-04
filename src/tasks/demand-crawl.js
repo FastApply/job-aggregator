@@ -6,11 +6,8 @@
  * unsatisfied customers Phase 0 surfaced), splits the OR-lists into (title × location)
  * queries, and fetches those exact jobs from every ENABLED source, upserting into Postgres.
  *
- * Sources:
- *   liftmycv    — always on (public keyword+location API, free). Biggest catalog.
- *   wonsulting  — on when WONSULTING_COOKIE is set (long-lived ~2y browser cookie). Free.
- *   googlejobs  — on when GOOGLE_JOBS=1 AND SCRAPINGDOG_KEY set. PAID per request — hard
- *                 capped by GOOGLE_JOBS_MAX_REQ per process run; keep it low. Opt-in.
+ * Source: liftmycv — public keyword+location API, free, no token. The token-based sources
+ * (wonsulting, jobhose, googledork) were removed 2026-10-04; see SOURCES below.
  *
  * Jobs are stored per-source (company keyed by career_url, external_id = source job id) so
  * they merge with existing rows rather than duplicating. origin = demand_<source>.
@@ -21,10 +18,9 @@
  * Env:  DEMAND_MAX_RESULTS(10) DEMAND_BATCH(15) DEMAND_RECRAWL_HOURS(6)
  *       DEMAND_MAX_TITLES(3) DEMAND_MAX_LOCATIONS(2) DEMAND_PAGES(1) DEMAND_PAGE_SIZE(100)
  *       DEMAND_DELAY_MS(1200) RECHECK_S(600) DEMAND_STARVED_SHARE(0.4)
- *       WONSULTING_COOKIE  GOOGLE_JOBS(0) SCRAPINGDOG_KEY GOOGLE_JOBS_MAX_REQ(40)
  */
-// Load .env at repo root so the always-on fleet picks up WONSULTING_COOKIE / SCRAPINGDOG_KEY /
-// SERPER_API_KEY without them being exported in the shell. Real env vars take precedence.
+// Load .env at repo root so a local run picks up settings without exporting them in the shell.
+// Real env vars take precedence.
 (function loadEnv() {
   try {
     const fs = require('fs'), path = require('path');
@@ -67,19 +63,6 @@ function httpGetJson(url, headers = {}) {
     }).on('error', reject).on('timeout', function () { this.destroy(); reject(new Error('timeout')); });
   });
 }
-function httpPostJson(hostname, path, body, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
-    const req = https.request({ hostname, path, method: 'POST', timeout: 45000,
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers } }, (res) => {
-      let d = ''; res.on('data', (c) => (d += c));
-      res.on('end', () => { try { resolve({ status: res.statusCode, json: JSON.parse(d || '{}') }); } catch { resolve({ status: res.statusCode, json: {} }); } });
-    });
-    req.on('error', reject); req.on('timeout', function () { this.destroy(); reject(new Error('timeout')); });
-    req.write(payload); req.end();
-  });
-}
-
 // ---------- shared company derivation (canonical career_url + ats + slug per employer) ----------
 const ATS_HOST_MAP = { greenhouse: 'greenhouse', lever: 'lever', ashby: 'ashby', workable: 'workable',
   bamboohr: 'bamboohr', smartrecruiters: 'smartrecruiters', recruitee: 'recruitee', breezy: 'breezy',
@@ -195,122 +178,12 @@ const liftmycv = {
   },
 };
 
-// Strip CR/LF/surrounding whitespace — env values pasted via a dashboard often pick up a
-// stray newline, which makes the derived x-xsrf-token header throw "Invalid character".
-const WONSULTING_COOKIE = (process.env.WONSULTING_COOKIE || '').replace(/[\r\n]+/g, '').trim();
-const WONSULTING_XSRF = (() => {
-  const m = WONSULTING_COOKIE.match(/XSRF-TOKEN=([^;]+)/);
-  let v = '';
-  try { v = m ? decodeURIComponent(m[1]) : ''; } catch { v = m ? m[1] : ''; }
-  return v.replace(/[^\x20-\x7E]/g, ''); // header-safe: drop any non-printable-ASCII
-})();
-const wonsulting = {
-  name: 'wonsulting',
-  enabled: () => !!(WONSULTING_COOKIE && WONSULTING_XSRF),
-  async search(title, location, page) {
-    const body = { job_title: title, location: location || '', work_setting: null, last_posted: null, longitude: null,
-      latitude: null, page, jobs_per_page: PAGE_SIZE, sort_by: 'posted_at', sort_direction: 'desc', industry: null,
-      radius: null, min_experience: null, max_experience: null, min_salary: null, max_salary: null, auto_apply_filter: true };
-    const { status, json } = await httpPostJson('app.wonsulting.com', '/api/job-board/find-jobs', body, {
-      accept: 'application/json, text/plain, */*', 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
-      'x-xsrf-token': WONSULTING_XSRF, referer: 'https://app.wonsulting.com/job-board/search', origin: 'https://app.wonsulting.com', cookie: WONSULTING_COOKIE });
-    if (status !== 200) { logger.warn({ status }, 'wonsulting non-200 (cookie expired?)'); return []; }
-    return (json.jobs || []).filter((j) => j.apply_url && j.company).map((j) => {
-      const atsName = j.ats_platform && typeof j.ats_platform === 'object' ? (j.ats_platform.display_name || j.ats_platform.name) : (typeof j.ats_platform === 'string' ? j.ats_platform : null);
-      return { externalId: j.provider_job_id, source: 'wonsulting', atsHint: atsName, company: j.company, applyUrl: j.apply_url,
-        title: j.title, location: j.location, description: j.description || null, postedAt: j.posted_at || null, workplaceType: wp(j.workplace_type), jobUrl: j.apply_url };
-    });
-  },
-};
-
-// jobhose (scale.jobs) — free public keyword+location API. `userId` is required but any string
-// works (no account validation). Rich payload: ATS source, company, structured location, salary,
-// experience, remote flag, full description. Direct job source (like liftmycv/wonsulting).
-const JOBHOSE_USER = process.env.JOBHOSE_USER_ID || 'user_demandcrawl';
-const JH_COUNTRIES = new Set(['united states', 'usa', 'us', 'united kingdom', 'uk', 'canada', 'germany', 'france', 'netherlands', 'australia', 'ireland', 'india', 'spain', 'singapore', 'united arab emirates', 'uae', 'saudi arabia', 'qatar', 'brazil', 'italy', 'italia', 'sweden', 'switzerland', 'japan', 'european union', 'europe', 'mexico', 'poland', 'portugal']);
-const jobhose = {
-  name: 'jobhose',
-  enabled: () => true,
-  async search(title, location, page) {
-    const loc = (location || '').trim();
-    const isCountry = JH_COUNTRIES.has(loc.toLowerCase());
-    const locObj = loc ? [{ city: isCountry ? '' : loc, state: '', country: isCountry ? loc : '' }] : [{ city: '', state: '', country: 'United States' }];
-    const take = Math.min(PAGE_SIZE, 50);
-    const params = new URLSearchParams({ userId: JOBHOSE_USER, jobTitles: title, take: String(take), skip: String((page - 1) * take), source: 'live', searchMode: 'top-matched', locations: JSON.stringify(locObj) });
-    const data = await httpGetJson(`https://jobhose-prod.scale.jobs/api/search-jobs?${params}`, { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', origin: 'https://scale.jobs', referer: 'https://scale.jobs/' });
-    return (data?.jobs || []).filter((j) => j.url && j.organization && j.title).map((j) => {
-      const jl = (j.jobLocations && j.jobLocations[0]) || null;
-      const locStr = jl ? [jl.city, jl.country].filter(Boolean).join(', ') : ((j.locationsAltRaw && j.locationsAltRaw[0]) || j.locationType || null);
-      return { externalId: j.externalId || j.id, source: 'jobhose', atsHint: j.source, company: j.organization,
-        applyUrl: j.url, title: j.title, location: locStr, description: j.descriptionText || j.descriptionHtml || null,
-        postedAt: j.datePosted || null, workplaceType: wp(j.aiWorkArrangement || (j.isRemote ? 'Remote' : j.locationType)), jobUrl: j.url };
-    });
-  },
-};
-
-// Google-dork discovery via Serper (PAID, capped). For each demanded (role, location) we run
-// ONE combined dork — `"role" location (site:greenhouse OR site:lever OR ...)` — across the
-// supported path-slug ATS, pull the company slugs out of the result URLs, and insert those
-// companies as active+unsynced so the FREE ATS fleet harvests ALL their jobs (last_synced_at
-// NULL => the fleet's NULLS-FIRST order crawls them next). Serper pays only for DISCOVERY; the
-// jobs come free. Self-disables the instant the key errors/exhausts (non-200) so it never
-// burns attempts, hard-capped per cycle. Enabled by default when SERPER_API_KEY is present.
-const SERPER_KEY = process.env.SERPER_API_KEY || '';
-const GOOGLE_DORK_ON = process.env.GOOGLE_DORK !== '0' && !!SERPER_KEY;
-const DORK_MAX_REQ = parseInt(process.env.DORK_MAX_REQ || '40', 10); // per-CYCLE Serper query cap
-const ATS_SITE = { greenhouse: ['boards.greenhouse.io', 'job-boards.greenhouse.io'], lever: ['jobs.lever.co'], ashby: ['jobs.ashbyhq.com'], smartrecruiters: ['jobs.smartrecruiters.com'] };
-const DORK_ATS = (process.env.DORK_ATS || Object.keys(ATS_SITE).join(',')).split(',').map((s) => s.trim()).filter((a) => ATS_SITE[a]);
-const DORK_SITES = DORK_ATS.flatMap((a) => ATS_SITE[a]);
-let dorkReqUsed = 0, dorkDisabled = false, dorkNewCompanies = 0;
-
-function serperSearch(q) {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({ q, num: 20, gl: 'us' });
-    const req = https.request({ hostname: 'google.serper.dev', path: '/search', method: 'POST', timeout: 25000,
-      headers: { 'X-API-KEY': SERPER_KEY, 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } },
-      (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => { let j = {}; try { j = JSON.parse(d); } catch {} resolve({ status: res.statusCode, json: j }); }); });
-    req.on('error', reject); req.on('timeout', function () { this.destroy(); reject(new Error('timeout')); });
-    req.write(payload); req.end();
-  });
-}
-
-const googledork = {
-  name: 'googledork',
-  enabled: () => GOOGLE_DORK_ON && !dorkDisabled && dorkReqUsed < DORK_MAX_REQ,
-  async search(title, location) {
-    if (dorkDisabled || dorkReqUsed >= DORK_MAX_REQ) return [];
-    dorkReqUsed++;
-    const sites = DORK_SITES.map((s) => `site:${s}`).join(' OR ');
-    const dork = `"${title}"${location ? ` ${location}` : ''} (${sites})`;
-    let res;
-    try { res = await serperSearch(dork); }
-    catch (e) { logger.warn({ err: e.message }, 'serper query failed'); return []; }
-    if (res.status !== 200) { dorkDisabled = true; logger.warn({ status: res.status, msg: res.json?.message }, 'SERP unavailable/exhausted — googledork off for this run'); return []; }
-    const found = new Map();
-    for (const o of (res.json.organic || [])) {
-      const c = deriveCompany(o.link, null, null, 'googledork');
-      let slug; try { slug = decodeURIComponent(c.slug || ''); } catch { slug = c.slug || ''; }
-      if (!DORK_ATS.includes(c.ats) || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{1,60}$/.test(slug)) continue;
-      if (!found.has(c.careerUrl)) found.set(c.careerUrl, { ats: c.ats, slug, careerUrl: c.careerUrl, domain: c.domain });
-    }
-    if (!DRY) {
-      for (const c of found.values()) {
-        try {
-          const r = await query(
-            `INSERT INTO companies (company_name, domain, ats, ats_slug, career_url, status, origin, last_synced_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'active', 'demand_googledork', NULL, NOW(), NOW())
-             ON CONFLICT (career_url) DO NOTHING RETURNING id`,
-            [c.slug, c.domain, c.ats, c.slug, c.careerUrl]);
-          if (r.rows.length) dorkNewCompanies++;
-        } catch (e) { logger.debug({ err: e.message }, 'dork company insert failed'); }
-      }
-      if (found.size) logger.info({ title: title.slice(0, 32), loc: location, hits: found.size, reqUsed: dorkReqUsed }, 'googledork: discovered ATS companies (fleet will harvest)');
-    }
-    return []; // no jobs returned directly — the free fleet harvests the discovered companies
-  },
-};
-
-const SOURCES = [liftmycv, wonsulting, jobhose, googledork];
+// LiftMyCV is the only source (2026-10-04). Removed: wonsulting (needed a browser cookie that kept
+// expiring, and had been returning nothing), jobhose (its search API timed out on nearly every
+// call, ~30s each — about half of every cycle) and googledork (paid Serper key). The user's
+// decision: nothing here should depend on renewing a token. LiftMyCV is a free public API and
+// supplied nearly all of the ~40k jobs demand-crawl added in the week before.
+const SOURCES = [liftmycv];
 
 // ---------- storage ----------
 async function upsertNormalized(n) {
@@ -460,7 +333,6 @@ async function selectDemand({ batch = BATCH, threshold = THRESHOLD, starvedShare
 }
 
 async function cycle() {
-  dorkReqUsed = 0; dorkNewCompanies = 0; // per-cycle reset (Serper cap + discovery counter)
   const active = SOURCES.filter((s) => s.enabled()).map((s) => s.name);
   logger.info({ sources: active, dry: DRY }, 'demand-crawl: active sources');
   const rows = await selectDemand();
@@ -472,7 +344,7 @@ async function cycle() {
     logger.info({ q: (row.query_text || '').slice(0, 48), loc: row.location, lane: row.lane || 'popular', searches: row.search_count, was_results: row.last_result_count, now_results: resultCount, fetched, added, perSource, dry: DRY }, 'demand crawled');
   }
   const starvedCount = rows.filter((r) => r.lane === 'starved').length;
-  logger.info({ demands: rows.length, starved: starvedCount, popular: rows.length - starvedCount, fetched: totalFetched, added: totalAdded, dorkReqUsed, dorkNewCompanies, dorkDisabled, dry: DRY }, 'demand-crawl cycle complete');
+  logger.info({ demands: rows.length, starved: starvedCount, popular: rows.length - starvedCount, fetched: totalFetched, added: totalAdded, dry: DRY }, 'demand-crawl cycle complete');
   return { demands: rows.length, added: totalAdded };
 }
 

@@ -112,7 +112,7 @@ async function collectChecks() {
       level: 'warning',
       title: 'Search index is falling behind',
       message: `${outbox.toLocaleString()} rows waiting to reach Meili (normal: 0-3,000). `
-        + 'Users are seeing jobs that are already gone. Check the Render worker.',
+        + 'Users are seeing jobs that are already gone. Check the VPS worker (Coolify).',
     });
   }
 
@@ -127,6 +127,9 @@ async function collectChecks() {
          FROM search_demand
         WHERE COALESCE(last_result_count, 0) <= 10
           AND query_text IS NOT NULL AND query_text <> ''
+          -- Only searches someone is still making. Counting every unmet search ever logged put
+          -- 14,782 in this alert on 2026-10-04, most of them one-off searches nobody repeats.
+          AND last_seen_at > NOW() - INTERVAL '14 days'
           AND (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '72 hours')`,
     );
   } catch (err) {
@@ -138,8 +141,8 @@ async function collectChecks() {
     const waitedH = starved.oldest
       ? Math.floor((Date.now() - new Date(starved.oldest).getTime()) / 3_600_000)
       : null;
-    // demand-crawl drains 25 per 20 minutes, so a backlog this size means the
-    // loop is not running at all rather than merely behind.
+    // demand-crawl drains DEMAND_BATCH (48) per ~20-minute cycle, so a backlog this size means
+    // the loop is not running or is badly behind.
     if (n > 200 || (waitedH != null && waitedH > 168)) {
       out.push({
         id: 'demand-starved',
@@ -147,8 +150,8 @@ async function collectChecks() {
         title: 'Searches with no jobs are not being crawled',
         message: `${n} unmet searches are overdue`
           + (waitedH != null ? `, the oldest waiting ${Math.floor(waitedH / 24)} days` : '')
-          + '. These are users whose automations have nothing to apply to. '
-          + 'Check demand-crawl on the Render worker.',
+          + ' (searched in the last 14 days). These are users whose automations have nothing to apply to. '
+          + 'Check demand-crawl on the VPS worker (Coolify).',
       });
     }
   }
