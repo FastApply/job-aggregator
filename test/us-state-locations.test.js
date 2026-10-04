@@ -136,3 +136,13 @@ test('an all-lowercase address is not read as ISO just for being lowercase', () 
   is('san francisco, ca', ['us']);
   is('indianapolis, in', ['us']);
 });
+
+test('a US country token written first is as explicit as one written last', () => {
+  // Workday's "US - City, ST" shape had no country: the search canary's "US - Austin, TX" was
+  // missing from location=United States (2026-10-04). ~16k live jobs.
+  for (const loc of ['US - Austin, TX', 'USA - San Diego, CA', 'United States - Morristown, NJ', 'U.S. - Boston, MA']) {
+    assert.deepEqual(countriesFromLocation(loc), ['us'], loc);
+  }
+  assert.deepEqual(countriesFromLocation('US - Wilmington, DE'), ['us'], 'a stated US settles DE as Delaware');
+  assert.deepEqual(countriesFromLocation('Germany - Berlin, DE'), ['de'], 'another country first is not the US');
+});
