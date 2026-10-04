@@ -1,4 +1,5 @@
-// Teamtailor adapter — parses each company's public RSS feed at {slug}.teamtailor.com/jobs.rss.
+// Teamtailor adapter — parses each company's public RSS feed at {slug}.teamtailor.com/jobs.rss, or
+// at https://{domain}/jobs.rss when the slug is a custom careers domain (careers.shine.co).
 // No auth, works direct. RSS is used over jobs.json because it carries MORE structured metadata:
 // remoteStatus (work type) and tt:department, which the JSON feed's JSON-LD omits. Both feeds carry
 // the FULL description, so teamtailor jobs need NO backfill.
@@ -35,8 +36,18 @@ function locationOf(block) {
   return parts.length ? parts.join(', ') : null;
 }
 
+// Employers often serve Teamtailor on their own domain. Their RSS is at the same path there, and the
+// teamtailor.com subdomain is usually not discoverable from the site, so such a company is stored with
+// the domain itself as its slug — a dot can never appear in a teamtailor.com subdomain label. Verified
+// 2026-10-04 on careers.shine.co (73 jobs), jobs.verda.com, careers.monta.com, careers.framna.com.
+function feedUrl(clientname) {
+  const slug = String(clientname || '').trim().toLowerCase();
+  if (slug.includes('.')) return `https://${slug.replace(/^https?:\/\//, '').replace(/\/.*$/, '')}/jobs.rss`;
+  return `https://${encodeURIComponent(slug)}.teamtailor.com/jobs.rss`;
+}
+
 async function fetchJobs(clientname) {
-  const res = await fetch(`https://${encodeURIComponent(clientname)}.teamtailor.com/jobs.rss`, {
+  const res = await fetch(feedUrl(clientname), {
     headers: { accept: 'application/rss+xml, application/xml', 'user-agent': 'Mozilla/5.0' },
     signal: AbortSignal.timeout(20000),
   });
@@ -63,7 +74,12 @@ async function fetchJobs(clientname) {
     };
   }).filter((j) => j.url && j.external_id !== 'teamtailor_null');
 
-  return { jobs, meta: { companyName: null, logoUrl: null, truncated: items.length >= CAP_HINT } };
+  // `capped`, not only `truncated`: crawl-companies-local passes meta.capped to syncForCompany as
+  // `partial`, and only that keeps the absence counter from reading the jobs beyond the feed's 100
+  // as closed. With `truncated` alone, a tenant with 100+ open roles lost the overflow after three
+  // syncs once absence removal was switched on (2026-09-28).
+  const capped = items.length >= CAP_HINT;
+  return { jobs, meta: { companyName: null, logoUrl: null, truncated: capped, capped } };
 }
 
-module.exports = { fetchJobs };
+module.exports = { fetchJobs, feedUrl };
