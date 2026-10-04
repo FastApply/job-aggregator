@@ -57,3 +57,23 @@ test('both: a slug is an org name, or a full host when it carries one', () => {
   assert.equal(reachmee.baseUrl('espressohouse-sweden'), 'https://espressohouse-sweden.attract.reachmee.com');
   assert.equal(reachmee.baseUrl('https://foo.attract.reachmee.com/jobs'), 'https://foo.attract.reachmee.com');
 });
+
+test('reachmee legacy: the main page table lists every job with its id and deadline', () => {
+  const jobs = reachmee.parseLegacyList(fx('reachmee-legacy-list.html'));
+  assert.ok(jobs.length > 5, `got ${jobs.length}`);
+  const j = jobs.find((x) => x.id === '1739');
+  assert.equal(j.title, 'Kommunvägledare till Socialt- stöd och vård');
+  assert.equal(j.deadline, '2026-10-12');
+  assert.equal(j.country, 'Sweden');
+  assert.match(j.url, /job_id=1739/);
+});
+
+test('reachmee legacy: the job page gives the description', () => {
+  const d = reachmee.parseLegacyDetail(fx('reachmee-legacy-job.html'));
+  assert.ok(d.description.length > 2000);
+});
+
+test('reachmee legacy: a slug is the main page URL, with an optional default town', () => {
+  assert.equal(reachmee.isLegacy('https://web103.reachmee.com/ext/I021/1890/main?site=9&validator=x&lang=SE#loc=Östersund'), true);
+  assert.equal(reachmee.isLegacy('espressohouse-sweden'), false);
+});
