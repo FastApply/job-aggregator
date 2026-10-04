@@ -111,7 +111,10 @@ async function fetchLegacy(slug) {
   const [listUrl, frag] = String(slug).split('#');
   const defaultTown = (frag && /^loc=/.test(frag)) ? decodeURIComponent(frag.slice(4)) : null;
   const html = await get(listUrl.replace(/^http:\/\//, 'https://'));
-  const items = parseLegacyList(html);
+  // An employer with no vacancies gets no table, only the list script and a "none open" line
+  // ("Det finns inga lediga tjänster att söka"): that is zero jobs, not a broken board.
+  const items = parseLegacyList(html)
+    || (/jobsTableClass/.test(html) && /inga lediga|no (?:vacancies|available|open)|ingen ledig/i.test(html) ? [] : null);
   if (!items) throw new Error('ReachMee: no job table (not found)');
   const customer = (listUrl.match(/\/ext\/[A-Z0-9]+\/(\d+)\//i) || [])[1] || 'x';
   return detailAndShape(items, parseLegacyDetail, (it) => `reachmee_${customer}_${it.id}`, defaultTown);

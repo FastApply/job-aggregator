@@ -1,0 +1,205 @@
+
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width,initial-scale=1" name="viewport">
+    <meta property="og:title" content="">
+    <meta property="og:url" content="https://web103.reachmee.com/ext/I003/1336/main?site=51&validator=ddbb3d1e4b69c10633ba84402d6c1c84&lang=SE">
+    <meta property="og:description" content="">
+    <meta property="og:image" content="">
+    <meta property="og:type" content="website">
+    <link rel="stylesheet" type="text/css" href="/styles/app.css?v=master-20260903.1-">
+    <script>document.documentElement.className += (window.self == window.top ? "" : " in-iframe");</script>
+        
+    <title>AF GRUPPEN | Lediga jobb</title>
+    <script src="/js/jquery-1.7.2.min.js"></script>
+<link rel="stylesheet" type="text/css" media="all" href="/styles/fontv2/css/font-awesome.min.css?ver=3.0">
+<script>!function(b,c,f,g,h,i,j){b[h]||(b[h]=function(){(b[h].q=b[h].q||[]).push(arguments)},b[h].q=b[h].q||[],i=c.createElement(f),j=c.getElementsByTagName(f)[0],i.async=1,i.src=g,j.parentNode.insertBefore(i,j))}(window,document,"script","https://cdn.ontame.io/af.js ", "ontame");</script>        <script src="/js/rm.utils.js?v=0.05"></script>
+<script src="/js/bootstrap.min.js"></script>
+<script src="/js/jquery.dataTables.min.js?ver=1.0"></script><script src="/js/jquery.tagFilterWidget.v2.min.js?ver=0.1"></script>
+
+<script src="/js/js.cookie.min.js?v=1.0"></script>
+<script src="/js/jquery.form.min.js?ver=1.0"></script>
+    <script src="/js/validate/jquery.validate.min.js?ver=1.1"></script>
+    <script src="/js/validate/additional-methods.min.js?ver=1.1"></script>
+    <script>
+jQuery.validator.addMethod("isSsnDate", function(value, element) {
+    if(value === ''){
+        return true;
+    }
+    var year = value.substring(0, 4);
+    var month = value.substring(4, 6);
+    var day = value.substring(6, 8);
+
+    year = parseInt(year);
+    month = parseInt(month);
+    day = parseInt(day);
+
+    var date = new Date(year, (month-1), day);
+    var now = new Date();
+
+    if ((date.getFullYear() === year) &&
+        (date.getMonth() + 1 === month) &&
+        (date.getDate() === day) &&
+        (date < now) &&
+        (year>1899))
+    {
+        return true;
+    }
+    return false;
+});
+
+$.extend(jQuery.validator.messages, {
+    required: "Uppgiften är obligatorisk.",
+    email: "Säkerställ att din e-postadress innehåller både ett @-tecken och en domän. (Till exempel my@mail.com)",
+    digits: "Endast siffror är tillåtet.",
+    equalTo: "Lösenorden matchar inte",
+    pattern: "Lösenordet är inte tillräckligt starkt",
+    accept: "Fel filtyp",
+    remote: "Du har redan registrerat ett konto hos oss, klicka på Logga in för att söka jobbet.",
+    minlength: "Ange ett giltigt personnummer ({0} tecken)",
+    maxlength: "Ange ett giltigt personnummer ({0} tecken)",
+    isSsnDate: "Please enter SSN with valid date numbers"
+});
+</script>        <script>
+            function iframeResize() {
+                var maxMargin = 100;
+
+                var bodyHeight = document.body.scrollHeight;
+                var bodyHeightWithMargin = document.documentElement.scrollHeight;
+                var height = bodyHeight;
+
+                if (bodyHeightWithMargin <= bodyHeight + maxMargin) {
+                    height = bodyHeightWithMargin;
+                }
+
+                if (height > 0) {
+                    parent.postMessage('resize::'+height,'*');
+                }
+            }
+            $(document).ready(function() {
+                if (window.location !== window.parent.location) {
+                    setInterval(iframeResize, 300);
+                }
+                
+            });
+        </script>
+                    </head>
+<body class="main_page">
+
+    <div class="wrap">
+        <noscript>
+        <div aria-live="assertive" class="notice notice--error">
+            JavaScript måste vara påslaget för att sidan ska fungera korrekt.         </div>
+        </noscript>
+
+        
+        <header id="logo-image">
+
+        </header>
+
+
+<script>
+	$(document).ready(function(){
+	$(".jobsTableClass").dataTable({"bPaginate":false,"bProcessing":false,"aaSorting":[[1,"desc"]],"bInfo":false,"sDom":"W, <\"top\"i>rt<\"bottom\"flp><\"clear\">","oLanguage":{"sZeroRecords":"Det finns inga lediga tj\u00e4nster att s\u00f6ka","sSearch":"S\u00f6k","sInfo":"total: _TOTAL_","sInfoFiltered":"","oAria":{"sSortAscending":", aktivera f\u00f6r att sortera kolumn stigande","sSortDescending":", aktivera f\u00f6r att sortera kolumn ned\u00e5tg\u00e5ende"}},"aoColumns":[null,null,null]});
+	
+	}); 
+</script>
+
+<main role="main" aria-labelledby="joblist-heading">
+
+    
+    <h1 id="joblist-heading" class="heading h1">Lediga jobb</h1>
+<div class="jobs">
+    
+    <div class="table-header">
+        <span>
+            <a  href='https://web103.reachmee.com/ext/I003/1336/subscribe?site=51&lang=SE&validator=ddbb3d1e4b69c10633ba84402d6c1c84' class='button' tabindex='0' >Prenumerera</a>
+        </span>
+        <div class="pull-right-buttons">
+            <a  href='https://web103.reachmee.com/ext/I003/1336/auth?site=51&lang=SE&validator=ddbb3d1e4b69c10633ba84402d6c1c84' class='button' tabindex='0' >Logga in eller registrera dig</a>
+        </div>
+    </div>
+
+    <div class="table-meta">
+        <div class="table-filters" id="filtersPlace">
+        </div>
+    </div>
+
+    <div id="mainjoblist">
+        <p class='text-muted text-center'>Det finns inga lediga tjänster att söka</p>    </div>
+</div>
+
+<script> 
+    $(document).ready(function(){
+        $("#filterForm").append($("#jobsTable_filter"));
+        $("#jobsTable_filter").append($("#jobsTable_filter input"));
+
+        $("#jobsTable_filter").addClass("filterItemsSelect  form-group");
+        $("#jobsTable_filter label").addClass("input-label");
+        $("#jobsTable_filter input").addClass("form-control input-field");
+
+        $(window).on('resize', function() {
+            var win = $(this); //this = window
+
+            rm.debounce(function() {
+                if (win.width() < 576) {
+                    if (!$('#jobsTable thead').length) {
+                        return;
+                    }
+
+                    $('#jobsTable thead').remove();
+                } else {
+                    if ($('#jobsTable thead').length) {
+                        return;
+                    }
+
+                    $('#jobsTable').prepend("<p class='text-muted text-center'>Det finns inga lediga tjänster att söka</p>");
+                    $('#jobsTable').dataTable();
+                }
+            }, 500, "some unique string");
+        });
+        $(window).trigger('resize');
+    });
+</script>
+
+
+</main>
+
+</div>
+
+<script>
+    $(document).ready(function() {
+        if (window.self == window.top) {
+            var logoImage = document.createElement('img');
+            logoImage.setAttribute('src', '');
+            logoImage.setAttribute('alt', '');
+            document.getElementById('logo-image').appendChild(logoImage);
+        }
+    });
+
+    if (window.location !== window.parent.location) {
+        let searchParams = new URLSearchParams(window.location.search);
+
+        // for Zmash
+        window.parent.postMessage(
+            JSON.stringify({
+                talentech_jobId: searchParams.has('job_id') ? searchParams.get('job_id') : 'none',
+                talentech_publishingPlaceId: searchParams.get('site'),
+                talentech_target: window.location.href
+            }),
+            '*'
+        );
+
+        // for General
+        window.parent.postMessage(
+            JSON.stringify({
+                talentech_pageName: window.location.href,
+            }),
+            '*'
+        );
+    }
+</script>
+</body>
+</html>

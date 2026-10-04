@@ -124,3 +124,9 @@ test('reachmee legacy: the older .jobDescription job page gives the description'
   const d = reachmee.parseLegacyDetail(fx('reachmee-legacy-jobdescription.html'));
   assert.ok(d.description && d.description.length > 1000, `got ${d.description && d.description.length}`);
 });
+
+test('reachmee legacy: an employer with no vacancies has no table, and that is zero jobs', () => {
+  const html = fx('reachmee-legacy-empty.html');
+  assert.equal(reachmee.parseLegacyList(html), null);
+  assert.match(html, /inga lediga/i);
+});
