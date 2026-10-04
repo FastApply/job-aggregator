@@ -12,11 +12,8 @@ const DETAIL_CONCURRENCY = 6;
 const DETAIL_DELAY_MS = 100;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const decode = (s) => String(s || '')
-  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-  .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
-  .trim();
+const { decodeEntities } = require('./html-entities');
+const decode = (s) => decodeEntities(String(s || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')).trim();
 const text = (html) => decode(String(html || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 
 /** The employer's base URL: a bare org name, or a full host when the slug carries one. */

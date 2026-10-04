@@ -20,9 +20,8 @@ const DETAIL_DELAY_MS = 100;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const COUNTRY_BY_LANG = { sv: 'Sweden', no: 'Norway', nb: 'Norway', nn: 'Norway', da: 'Denmark', fi: 'Finland', is: 'Iceland', de: 'Germany', nl: 'Netherlands' };
 
-const decode = (s) => String(s || '')
-  .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ');
+const { decodeEntities } = require('./html-entities');
+const decode = (s) => decodeEntities(s);
 const text = (html) => decode(String(html || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 
 /** The employer's site: a bare org name, or a full host when the slug carries one. */
@@ -34,13 +33,20 @@ function baseUrl(slug) {
 function parseList(html) {
   const lang = (String(html).match(/<html[^>]*\blang="([a-z]{2})/i) || [])[1];
   const country = COUNTRY_BY_LANG[(lang || '').toLowerCase()] || null;
+  // Columns by their header, not position: a site without a town column (Forex) put the deadline
+  // in the town's slot and the job's location became "2026-11-01, Sweden".
+  const heads = [...String(html).matchAll(/<h5 title="([^"]+)"/g)].map((h) => decode(h[1]).toLowerCase());
+  const col = (re) => heads.findIndex((h) => re.test(h));
+  const townCol = col(/\b(stad|ort|placering|kommun|arbetsort|location|city|town)\b/);
+  const deadlineCol = col(/sista|deadline|last day/);
   const jobs = [];
   for (const m of String(html).matchAll(/<li class="at-jobs-list-item">([\s\S]*?)<\/li>/g)) {
     const link = m[1].match(/href="([^"]*\/jobs\/(\d+)-[^"?#]*)"[^>]*>([\s\S]*?)<\/a>/);
     if (!link) continue;
     const cells = [...m[1].matchAll(/<div class="at-jobs-list-cell-\d+">([\s\S]*?)<\/div>/g)].map((c) => text(c[1]));
-    const town = cells[1] || null;
-    jobs.push({ id: link[2], url: decode(link[1]), title: text(link[3]), town, deadline: cells[2] || null, country });
+    const town = townCol >= 0 ? cells[townCol] || null : null;
+    const deadline = deadlineCol >= 0 ? cells[deadlineCol] || null : null;
+    jobs.push({ id: link[2], url: decode(link[1]), title: text(link[3]), town, deadline, country });
   }
   return jobs;
 }
