@@ -77,3 +77,19 @@ test('reachmee legacy: a slug is the main page URL, with an optional default tow
   assert.equal(reachmee.isLegacy('https://web103.reachmee.com/ext/I021/1890/main?site=9&validator=x&lang=SE#loc=Östersund'), true);
   assert.equal(reachmee.isLegacy('espressohouse-sweden'), false);
 });
+
+test('named HTML entities in Swedish town names are decoded', () => {
+  const { decodeEntities } = require('../src/adapters/html-entities');
+  assert.equal(decodeEntities('&Ouml;rnsk&ouml;ldsvik'), 'Örnsköldsvik');
+  assert.equal(decodeEntities('V&auml;ster&aring;s &#8211; &#x00C5;re'), 'Västerås – Åre');
+  assert.equal(decodeEntities('&unknown;'), '&unknown;');
+});
+
+test('reachmee: a list without a town column never puts the deadline in the location', () => {
+  const html = '<html lang="sv"><h5 title="Tjänst">Tjänst</h5><h5 title="Sista ansökningsdag">Sista</h5>'
+    + '<li class="at-jobs-list-item"><div class="at-jobs-list-cell-40"><a href="https://forex.attract.reachmee.com/jobs/4680-kassor">Kassör</a></div>'
+    + '<div class="at-jobs-list-cell-40">2026-11-01</div></li></html>';
+  const [j] = reachmee.parseList(html);
+  assert.equal(j.town, null);
+  assert.equal(j.deadline, '2026-11-01');
+});
