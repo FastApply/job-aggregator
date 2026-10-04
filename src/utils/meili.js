@@ -11,6 +11,7 @@
  */
 const logger = require('../logger');
 const { countriesFromLocation, locationTokens } = require('./location-countries');
+const { remoteRegionCountries } = require('./remote-regions');
 const { normalizeEmploymentType } = require('./extract');
 
 const HOST = process.env.MEILI_HOST || '';
@@ -151,7 +152,12 @@ function toDocument(row) {
     // Countries resolved once, here, so the query side needs no substring matching. Postgres
     // matches short aliases (us/uk/uae) with a word-boundary regex; Meilisearch has no such
     // operator, and CONTAINS "us" would return Houston. An exact filter on this sidesteps both.
-    location_countries: countriesFromLocation(row.location),
+    //
+    // A REMOTE job open across a region ("Remote, EMEA", "Remote - Nordics") also counts in each of
+    // its countries, so location=Sweden finds it — see remote-regions.js.
+    location_countries: row.is_remote
+      ? [...new Set([...countriesFromLocation(row.location), ...remoteRegionCountries(row.location)])]
+      : countriesFromLocation(row.location),
     // The same trick for cities and regions. `location CONTAINS "london"` is an unindexed
     // substring scan — measured 8,589ms against 47ms for the indexed country equality, ~180x —
     // and it blew past the client's 5s timeout, so those searches silently fell back to a 6.5s
