@@ -80,7 +80,9 @@ function parseLegacyList(html) {
   const jobs = [];
   for (const row of body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
     const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1]);
-    const a = (cells[0] || '').match(/href=['"]([^'"]*job_id=(\d+)[^'"]*)['"][^>]*>([\s\S]*?)<\/a>/);
+    // The title cell is not always first: some sites lead with the town (Ort, Tjänst, ...).
+    const linkCell = cells.find((c) => /job_id=\d+/.test(c)) || '';
+    const a = linkCell.match(/href=['"]([^'"]*job_id=(\d+)[^'"]*)['"][^>]*>([\s\S]*?)<\/a>/);
     if (!a) continue;
     const cell = (i) => (i >= 0 && cells[i] ? text(cells[i].replace(/<span class=.show-mobile.>[\s\S]*?<\/span>|<span[^>]*display:none[^>]*>[\s\S]*?<\/span>/g, '')) : null);
     jobs.push({ id: a[2], url: decode(a[1]), title: text(a[3]), town: cell(townCol), deadline: cell(deadlineCol), country });

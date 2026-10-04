@@ -93,3 +93,12 @@ test('reachmee: a list without a town column never puts the deadline in the loca
   assert.equal(j.town, null);
   assert.equal(j.deadline, '2026-11-01');
 });
+
+test('reachmee legacy: a table that leads with the town column still yields jobs and towns', () => {
+  const jobs = reachmee.parseLegacyList(fx('reachmee-legacy-town-first.html'));
+  assert.ok(jobs.length >= 5, `got ${jobs.length}`);
+  const j = jobs.find((x) => x.id === '819');
+  assert.equal(j.town, 'Trosa');
+  assert.equal(j.deadline, '2026-10-18');
+  assert.match(j.title, /^Fysioterapeut/);
+});
