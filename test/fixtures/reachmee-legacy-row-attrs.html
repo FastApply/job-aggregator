@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" type="text/css" media="all" href="/styles/style.css?ver=1.4">
+<link rel="stylesheet" type="text/css" media="all" href="/styles/I006-1244-6.css">
+<!--[if IE]> 
+<link rel="stylesheet" type="text/css" media="all" href="/styles/styleie.css">
+<link rel="stylesheet" type="text/css" media="all" href="/styles/I006-1244-6ie.css">
+<![endif]-->
+<title>Formas</title>
+<script src="/js/jquery-1.7.2.min.js"></script>
+<script>
+function showResponse(responseText, statusText, $form){
+    if (typeof($.fancybox) != 'undefined') {
+        $.fancybox.close();
+    }
+
+    $("#ajaxcover").fadeOut();
+    if (statusText == 'error') {
+        $("p#errormsg").text(responseText.responseText);
+        $("#errorbox").fadeIn();
+        $("#error-cnl").focus();
+    } else {
+        window.location.reload();
+    }
+};
+
+function showResponseMessage(response, statusText, $form) {
+    var message = JSON.parse(response.responseText).message;
+    showResponse({ "responseText": message }, statusText, $form);
+};
+
+$(document).ready(function(){
+    //message box
+    $("#error-cnl").click(function(){
+        $("#errorbox").fadeOut();
+    });
+});
+</script>
+<link rel="stylesheet" type="text/css" media="all" href="/styles/font/css/font-awesome.css?ver=3.0">
+<link rel="stylesheet" type="text/css" media="all" href="/styles/font/css/font-awesome-ie7.css?ver=3.0">
+        <script src="/js/rm.utils.js?v=0.05"></script>
+<script src="/js/bootstrap.min.js"></script>
+<script src="/js/jquery.dataTables.min.js?ver=1.0"></script><script src="/js/jquery.tagFilterWidget.min.js?ver=1.3"></script>
+
+<script src="/js/js.cookie.min.js?v=1.0"></script>
+<script src="/js/jquery.form.min.js?ver=1.0"></script>
+<script src="/js/jquery.validate.min.js?ver=1.1"></script>
+<script>
+jQuery.validator.addMethod("isSsnDate", function(value, element) {
+    if(value === ''){
+        return true;
+    }
+    var year = value.substring(0, 4);
+    var month = value.substring(4, 6);
+    var day = value.substring(6, 8);
+
+    year = parseInt(year);
+    month = parseInt(month);
+    day = parseInt(day);
+
+    var date = new Date(year, (month-1), day);
+    var now = new Date();
+
+    if ((date.getFullYear() === year) &&
+        (date.getMonth() + 1 === month) &&
+        (date.getDate() === day) &&
+        (date < now) &&
+        (year>1899))
+    {
+        return true;
+    }
+    return false;
+});
+
+$.extend(jQuery.validator.messages, {
+    required: "Uppgiften är obligatorisk.",
+    email: "Säkerställ att din e-postadress innehåller både ett @-tecken och en domän. (Till exempel my@mail.com)",
+    digits: "Endast siffror är tillåtet.",
+    equalTo: "Lösenorden matchar inte",
+    pattern: "Lösenordet är inte tillräckligt starkt",
+    accept: "Fel filtyp",
+    remote: "Du har redan registrerat ett konto hos oss, klicka på Logga in för att söka jobbet.",
+    minlength: "Ange ett giltigt personnummer ({0} tecken)",
+    maxlength: "Ange ett giltigt personnummer ({0} tecken)",
+    isSsnDate: "Please enter SSN with valid date numbers"
+});
+</script>        <script>
+            function iframeResize() {
+                var maxMargin = 100;
+
+                var bodyHeight = document.body.scrollHeight;
+                var bodyHeightWithMargin = document.documentElement.scrollHeight;
+                var height = bodyHeight;
+
+                if (bodyHeightWithMargin <= bodyHeight + maxMargin) {
+                    height = bodyHeightWithMargin;
+                }
+
+                if (height > 0) {
+                    parent.postMessage('resize::'+height,'*');
+                }
+            }
+            $(document).ready(function() {
+                if (window.location !== window.parent.location) {
+                    setInterval(iframeResize, 300);
+                }
+                
+            });
+        </script>
+    </head>
+
+<body class="mainPage">
+
+<div id="r_wrapper">
+<div id="r_main">
+	<div class="container jobListContainer">
+
+<script>
+//validate
+function loginValidation() {
+$("#loginform").validate({
+	errorClass: "invalidElement",
+	errorElement: "li"	
+	});
+	if ($("#loginform").valid()) { return true; }
+	else { return false;}
+}
+
+function pwdformValidation(){
+$("#pwd-form").validate({
+	rules: { login: 'email' },
+	errorClass: "invalidElement",
+	errorElement: "li"	
+	});
+	if ($("#pwd-form").valid()) { return true; }
+	else { return false;}
+}
+
+function profValidation(){
+$("#profile").validate({
+	rules: { email: 'email', passwordrepeat: { equalTo: "#passwordencrypted"}},
+	errorClass: "invalidElement",
+	errorElement: "li"
+	});
+	if ($("#profile").valid()) { return true; }
+	else { return false;}
+}
+
+function getRedirectDestinationAfterLogin(){
+    return 'https://web103.reachmee.com/ext/I006/1244/profile?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec'
+}
+
+function redirectAfterSuccess(response) {
+    var newLocation = getRedirectDestinationAfterLogin() + response['url_suffix'];
+    window.location = newLocation;
+}
+
+//ajax forms
+var options = {
+	beforeSubmit: loginValidation,
+	success: redirectAfterSuccess,
+	error: showResponseMessage,
+	timeout: 10000
+};
+var options2 = {
+    beforeSubmit: pwdformValidation,
+    success: function(response, statusText, $form) {
+        window.location = 'https://web103.reachmee.com/ext/I006/1244/resetpwd?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec&userid=' + response.message;
+    },
+    error: showResponseMessage,
+    timeout: 10000
+};
+
+var facebookRerequireMessage = "You can't login with facebook without granting email permission. If you still want to log in, click on facebook login button again and don't restrict email permission.";
+
+$("#loginform").ajaxForm(options);
+$("#pwd-form").ajaxForm(options2);
+$("#profile").ajaxForm({
+    beforeSubmit:profValidation,
+    success: function (response, statusText,$form) {
+        $("p#errormsg").text(response.message);
+        $("#errorbox").fadeIn();
+        $('#loginbox').fadeOut();
+        $('#pwd-form').hide();
+        $('#loginform').show();
+    },
+    error: showResponseMessage,
+    timeout: 10000
+});
+
+</script>
+<div id="spinner-overlay">
+    <div id="fancybox-loading">
+        <div></div>
+    </div>
+</div>
+<div id="loginbox" class="showbox">
+	<div class="control">
+        <div class="loginbox-body">
+            <button type="button" class="btn-close" onclick="rm.login_form.hide()" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            <ul class="rm-nav rm-nav-tabs">
+                <li class="tabsbar-button active" name="sign-in">
+                    <a href="javascript:;" onclick="rm.login_form.switch_tab('sign-in')">Logga in</a>
+                </li>
+                <li class="tabsbar-button" name="sign-up">
+                    <a href="javascript:;" onclick="rm.login_form.switch_tab('sign-up')">Registrera</a>
+                </li>
+            </ul>
+            <div id="sign-in" class="rm-tab" aria-expanded="true">
+                <form action="https://web103.reachmee.com/ext/I006/1244/sclogin?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec" id="loginform" method="post" accept-charset="utf-8">
+                    <p class="welcomeText">E-post och lösenord är det enda som krävs för att logga in</p>
+                    <p><label for="user-login">E-postadress</label></p>
+                    <input id="user-login" name="login" class="required" type="text" required="required"
+                           >
+                    <p><label for="user-password">Lösenord</label></p>
+                    <input id="user-password" name="password" class="required" type="password" required="required"
+                          >
+                    <p>
+                        <a href="javascript:;" onclick="rm.login_form.change_pwd_toogle()" class="collapseItemHeader underlined"
+                           onkeypress="rm.space_key_press(rm.login_form.change_pwd_toogle)">Skapa nytt lösenord</a>
+                    </p>
+                    <br>
+                    <div>
+                        <div class="float-right sign-actions-block">
+                            <a href="javascript:;" class="login-cnl" onclick="rm.login_form.hide()">Avbryt</a>
+                            <input id="login-btn" class="button-med" type="submit"
+                                   value="Logga in"
+                            >
+                        </div>
+                        <br>
+                    </div>
+
+                </form>
+
+                <form action="https://web103.reachmee.com/ext/I006/1244/screset?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec" id="pwd-form" method="post" accept-charset="utf-8">
+                    <p><label for="user-login2">E-postadress</label></p>
+                    <input id="user-login2" name="login" class="required" type="text" required="required">
+                    <br>
+                    <div>
+                        <div class="float-right sign-actions-block">
+                            <a href="javascript:;" onclick="rm.login_form.change_pwd_toogle()" class="login-cnl"
+                               onkeypress="rm.space_key_press(rm.login_form.change_pwd_toogle)"
+                            >Avbryt</a>
+                            <input id="pwd-sent" class="button-med" type="submit"
+                                   value="Skicka"
+                            >
+                        </div>
+                        <br>
+                    </div>
+                </form>
+            </div>
+            <div id="sign-up" class="rm-tab" style="display: none;" aria-expanded="false">
+                <form action="https://web103.reachmee.com/ext/I006/1244/scregistrate?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec" id="profile" class="profileform" name="profile" method="post" accept-charset="utf-8">
+
+
+                    <p class="welcomeText">För att kunna förhandsgranska och redigera dina jobbansökningar behöver du först registrera dig. Ange alla obligatoriska uppgifter nedan för att gå vidare.</p>
+                    <p class="profileLabel"><label for="email">E-postadress</label></p>
+                    <input class="prof-field required" name="email" id="email" type="email" value="" required="required"
+                           
+                    >
+                    <p class="profileLabel"><label for="passwordencrypted">Ange lösenord</label></p>
+                    <input class="prof-field required" name="passwordencrypted" id="passwordencrypted" type="password" value=""
+                           required="required" 
+                    >
+                    <div id="policyinputs" class="form-group">
+	<div class="control-stack">
+		<label id="labelterms" class="chackbox is-required">
+			<input aria-labelledby="labelterms" type='checkbox'  required="required" name='acceptterms' id='acceptterms' data-msg="Du måste ge ditt samtycke till att skapa konto"/>
+			Jag samtycker till att min information hanteras i enlighet med policyn. &nbsp;<img src="/styles/images/star-icon.svg" class="ico-required" alt="Uppgiften är obligatorisk.">&nbsp;<a id="policy_link" href="javascript:showProfilePolicy()">Läs vår policy</a>
+		</label>
+	</div>
+</div>
+<input name='policyid' id='policyid' type='hidden' value='3'/>
+<script>
+function showProfilePolicy(){
+	window.open('https://web103.reachmee.com/ext/I006/1244/policy?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec&policy=3','Läs vår policy','width=600,height=400,scrollbars=1,resizable=1')
+}
+
+</script>
+
+                    <div>
+                        <div class="float-right sign-actions-block" >
+                            <a href="javascript:;" class="login-cnl" onclick="rm.login_form.hide()">Avbryt</a>
+                            <input id="signup-btn" class="button-med" type="submit"
+                                   value="Registrera"
+                            >
+                        </div>
+                        <br>
+                    </div>
+                </form>
+            </div>
+                            <p class="loginbox-bottom-filler"></p>
+                    </div>
+	</div>
+</div>
+    <div id="cl1" class="clear"></div>
+<script src="/js/chosen.jquery.min.js"></script>
+<script>
+	$(document).ready(function(){
+		function subValidation(){
+		$("#subscribeform").validate({
+			rules: { email: 'email'},
+			errorClass: "invalidElement",
+			errorElement: "li"	
+			});
+			if ($("#subscribeform").valid()) { return true; }
+			else { return false;}
+		}
+		
+		var options = {
+			beforeSubmit: subValidation,
+			success: function (responseText, statusText, $form){
+						$("#ajaxcover").fadeOut();
+						$('.showbox').fadeOut();
+						$("p#errormsg").text(responseText.message);
+						$("#errorbox").fadeIn();
+					},
+			error: showResponseMessage,
+			timeout: 1000
+		};
+		$("#subscribeform").ajaxForm(options);
+	});
+</script>
+
+<div id="subscribebox" class="showbox">
+	<div class="control">
+        <form action="https://web103.reachmee.com/ext/I006/1244/scsubscribe?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec" id="subscribeform" name="subscribeform" method="post" accept-charset="utf-8">
+            <p>E-postadress</p>
+    		<input name="email" id="subscribe-email" type="text" class="sub-email required" required="required">
+    		<p>Frekvens</p>
+    		<select id="subscribe-frequency" name="frequency">
+	    		<option value="0">dagligen</option>
+	    		<option value="1">vecka</option>
+	    		<option value="2">månatlig</option>
+    		</select>
+    		<hr>
+
+	 <div id="policyinputs" class="form-group">
+	<div class="control-stack">
+		<label id="labelterms" class="chackbox is-required">
+			<input aria-labelledby="labelterms" type='checkbox'  required="required" name='acceptterms' id='acceptterms' data-msg="<span><i class='fa fa-exclamation-circle' style='margin-right: 2px;'></i></span>Du behöver acceptera för att fortsätta"/>
+			Jag samtycker till att min information hanteras i enlighet med policyn. &nbsp;<img src="/styles/images/star-icon.svg" class="ico-required" alt="Uppgiften är obligatorisk.">&nbsp;<a id="policy_link" href="javascript:showPolicy()">Läs vår policy</a>
+		</label>
+	</div>
+</div>
+<input name='policyid' id='policyid' type='hidden' value='2'/>
+<script>
+function showPolicy(){
+	window.open('https://web103.reachmee.com/ext/I006/1244/policy?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec&policy=2','Läs vår policy','width=600,height=400,scrollbars=1,resizable=1')
+}
+
+</script>
+    		<p><input id="subs-cnl" onclick="rm.subscription_form.hide()" type="button" class="button-med" value="Avbryt"></p>
+	    	<p><input id="subs-btn" type="submit" class="button-med" value="Prenumerera"></p>
+    	</form>
+    </div> <!-- control end -->
+</div> <!-- subscribebox end -->
+	 
+		<!-- ERROR BOX -->
+		<div id="errorbox" class="showbox">
+			<div class="control">
+				<h3 id='errortitle'>Meddelande</h3>
+				<p id='errormsg'></p>
+				<p><input id="error-cnl" class="button-med" type="button" value="Stäng"></p>
+			</div>
+		</div>
+		<div role="banner" class="welcome">
+			<div class="image alignleft"></div>
+		</div>
+		<div id="cl0" class="clear"></div>
+
+		<!-- Features BOX -->
+		<div class="features" role="navigation">
+				<div class="login fbutton" tabindex="0" onclick="rm.login_form.show()" onkeypress="rm.space_key_press(rm.login_form.show)">Logga in eller registrera dig</div>
+	
+			<div class="subscribe fbutton sub-form" tabindex="0" onclick="rm.subscription_form.show()" onkeypress="rm.space_key_press(rm.subscription_form.show)">Prenumerera</div>
+		</div>
+<div id="cl4" class="clear"></div>
+<!-- JOB LIST BOX -->
+<div role="main" class="joblist">
+
+<script>
+	$(document).ready(function(){
+	$(".jobsTableClass").dataTable({"bPaginate":false,"bProcessing":false,"aaSorting":[],"bInfo":false,"sDom":"W, <\"top\"i>rt<\"bottom\"flp><\"clear\">","oLanguage":{"sZeroRecords":"Det finns inga lediga tj\u00e4nster att s\u00f6ka","sSearch":"S\u00f6k","sInfo":"total: _TOTAL_","sInfoFiltered":"","oAria":{"sSortAscending":", aktivera f\u00f6r att sortera kolumn stigande","sSortDescending":", aktivera f\u00f6r att sortera kolumn ned\u00e5tg\u00e5ende"}},"aoColumns":[null,null]});
+	
+	}); 
+</script>
+	
+	<table id="jobsTable" class="jobsTableClass" border="0" cellspacing="0">
+		<thead>
+			<th id="col-1">Tjänst</th>
+			<th id="col-6">Sista ansökningsdag</th>
+		</thead>
+		<tbody>
+	
+			<tr class="jobs" id="200" valign="top" onclick="document.location='https://web103.reachmee.com/ext/I006/1244/job?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec&job_id=200'">
+			<td headers="col-1" class="jobitem">
+				<a href="https://web103.reachmee.com/ext/I006/1244/job?site=6&lang=SE&validator=414734e8cf0352b84851fce6bc7a12ec&job_id=200" title="2026-10-02">Forskningssekreterare med samhällsbyggnadsprofil</a>
+			</td>
+						<td headers="col-6" class="publishto">
+			<span data-order="1" style="display:none">2026-10-23</span> 
+			2026-10-23</td>
+						</tr>
+		</tbody>
+	</table>
+</div>
+	
+	</div> <!-- jobListContainer end -->
+</div> <!-- r_main end -->
+<div id="cl5" class="clear"></div>
+
+</div> <!-- r_wrapper end -->
+<footer role="contentinfo"></footer>
+</body>
+</html>
