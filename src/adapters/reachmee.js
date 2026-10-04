@@ -74,24 +74,36 @@ function parseLegacyList(html) {
     || String(html).match(/<table[^>]*id="jobsTable"[^>]*>([\s\S]*?)<\/table>/i) || [])[1];
   if (!table) return null;
   const heads = [...table.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((m) => text(m[1]).toLowerCase());
-  const townCol = heads.findIndex((h) => /\b(ort|stad|placering|kommun|arbetsort|location|city|town)\b/.test(h));
-  const deadlineCol = heads.findIndex((h) => /sista|deadline|last day/.test(h));
-  const body = (table.match(/<tbody>([\s\S]*?)<\/tbody>/) || [])[1] || '';
+  const col = (re) => heads.findIndex((h) => re.test(h));
+  const townCol = col(/\b(ort|stad|placering|kommun|arbetsort|location|city|town)\b/);
+  const deadlineCol = col(/sista|deadline|last day/);
+  const titleCol = col(/tjänst|befattning|rubrik|position|title|job/);
+  const countryCol = col(/^(land|country)$/);
+  const body = (table.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/) || [])[1] || '';
   const jobs = [];
-  for (const row of body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
-    const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1]);
+  // Rows may carry attributes (<tr class="jobs" onclick=...>) on older page variants, and some link
+  // the job only through that onclick, with no <a> (Försvarsmakten).
+  for (const row of body.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/g)) {
+    const cells = [...row[2].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1]);
+    const cell = (i) => (i >= 0 && cells[i] ? text(cells[i].replace(/<span class=.show-mobile.>[\s\S]*?<\/span>|<span[^>]*display:none[^>]*>[\s\S]*?<\/span>/g, '')) || null : null);
     // The title cell is not always first: some sites lead with the town (Ort, Tjänst, ...).
     const linkCell = cells.find((c) => /job_id=\d+/.test(c)) || '';
     const a = linkCell.match(/href=['"]([^'"]*job_id=(\d+)[^'"]*)['"][^>]*>([\s\S]*?)<\/a>/);
-    if (!a) continue;
-    const cell = (i) => (i >= 0 && cells[i] ? text(cells[i].replace(/<span class=.show-mobile.>[\s\S]*?<\/span>|<span[^>]*display:none[^>]*>[\s\S]*?<\/span>/g, '')) : null);
-    jobs.push({ id: a[2], url: decode(a[1]), title: text(a[3]), town: cell(townCol), deadline: cell(deadlineCol), country });
+    const onclick = row[1].match(/location\s*=\s*'([^']*job_id=(\d+)[^']*)'/);
+    if (!a && !onclick) continue;
+    const id = a ? a[2] : onclick[2];
+    const url = decode(a ? a[1] : onclick[1]);
+    const title = a ? text(a[3]) : cell(titleCol >= 0 ? titleCol : 0);
+    jobs.push({ id, url, title, town: cell(townCol), deadline: cell(deadlineCol), country: cell(countryCol) || country });
   }
   return jobs;
 }
 
 function parseLegacyDetail(html) {
-  const body = String(html).match(/class="jobad-body"[^>]*>([\s\S]*?)<\/div>/);
+  // Two page variants: .jobad-body, or (older) .jobDescription closed by its suffix paragraph.
+  const body = String(html).match(/class="jobad-body"[^>]*>([\s\S]*?)<\/div>/)
+    || String(html).match(/class="jobDescription"[^>]*>([\s\S]*?)<p class="sufixtext"/)
+    || String(html).match(/class="jobDescription"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/);
   return { department: null, description: body ? body[1].trim() : null };
 }
 

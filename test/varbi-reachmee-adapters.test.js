@@ -102,3 +102,25 @@ test('reachmee legacy: a table that leads with the town column still yields jobs
   assert.equal(j.deadline, '2026-10-18');
   assert.match(j.title, /^Fysioterapeut/);
 });
+
+test('reachmee legacy: rows with attributes (<tr class="jobs" onclick=...>) are read', () => {
+  const jobs = reachmee.parseLegacyList(fx('reachmee-legacy-row-attrs.html'));
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].id, '200');
+  assert.equal(jobs[0].deadline, '2026-10-23');
+});
+
+test('reachmee legacy: rows linked only by onclick take the title and country from their columns', () => {
+  const jobs = reachmee.parseLegacyList(fx('reachmee-legacy-onclick.html'));
+  assert.ok(jobs.length > 300, `got ${jobs.length}`);
+  const j = jobs.find((x) => x.id === '49451');
+  assert.equal(j.title, 'Ledsystoff Arboga');
+  assert.equal(j.town, 'Arboga');
+  assert.match(j.url, /job_id=49451/);
+  assert.ok(j.country);
+});
+
+test('reachmee legacy: the older .jobDescription job page gives the description', () => {
+  const d = reachmee.parseLegacyDetail(fx('reachmee-legacy-jobdescription.html'));
+  assert.ok(d.description && d.description.length > 1000, `got ${d.description && d.description.length}`);
+});
