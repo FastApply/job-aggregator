@@ -431,8 +431,13 @@ function usStateReading(segments, rawText) {
   }
 
   if (!US_STATES.has(st) || city === st) return null;
-  if (!usTail && end !== 2 && !startsAddress) return null;
-  if (usTail) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
+  // The country written FIRST, as Workday and others do: "US - Austin, TX". It is as explicit as
+  // a trailing "USA", but this rule only looked at the end, so the 3-segment shape fell through
+  // and the job got no country at all — invisible to location=United States (the search canary
+  // caught "US - Austin, TX" on 2026-10-04; ~16k live jobs have this shape).
+  const usHead = end === 3 && LOOKUP.get(clean[0]) === 'us' && !US_STATE_NAMES.has(clean[0]);
+  if (!usTail && !usHead && end !== 2 && !startsAddress) return null;
+  if (usTail || usHead) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
 
   const rawLast = String(rawText).split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean).pop() || '';
   if (/^[a-z]{2}$/.test(rawLast) && /[A-Z]/.test(String(rawText)) && NAME.has(st)) return reading([st]);
