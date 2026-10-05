@@ -22,6 +22,7 @@ const teamtailor = require('./teamtailor');
 const jobvite = require('./jobvite');
 const varbi = require('./varbi');
 const reachmee = require('./reachmee');
+const jobylon = require('./jobylon');
 
 const adapters = {
   greenhouse,
@@ -48,6 +49,7 @@ const adapters = {
   jobvite,
   varbi,
   reachmee,
+  jobylon,
 };
 
 function getAdapter(atsName) {
