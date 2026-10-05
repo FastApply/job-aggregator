@@ -317,17 +317,20 @@ function countriesFromLocation(text) {
   const segments = s.split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean);
   const last = segments[segments.length - 1];
   const prev = segments[segments.length - 2];
-  // A list of US places, "Arcadia, FL, Auburn, AL, ..., Puyallup, WA" (one job posted in several
-  // cities): every second segment a state code. The trailing code is a state, not a country; read
-  // as one it tagged such jobs Albania ("AL") or Colombia ("CO"), or nothing, and a United States
-  // filter dropped them (search canary, 2026-10-04).
-  // A repeated code that is also a country ("Berlin, DE, Munich, DE") stays ambiguous: it counts as
-  // US only when two different states are named, or one that is no country code ("TX").
-  const stateCodes = segments.filter((_, i) => i % 2 === 1 && !/^(us|usa|united states)$/.test(segments[i]));
-  const usCityList = segments.length >= 4
-    && stateCodes.every((seg) => US_STATES.has(seg))
-    && (segments.length % 2 === 0 || /^(us|usa|united states)$/.test(last))
-    && (new Set(stateCodes).size >= 2 || stateCodes.some((seg) => !NAME.has(seg)));
+  // A list of US places, one job posted in several cities: "Arcadia, FL, Auburn, AL, ..., Puyallup,
+  // WA" or "TX - Dallas, NM - Albuquerque, ..., TN, NY". Read as a country, the trailing state code
+  // tagged such jobs Albania ("AL") or Colombia ("CO"), or nothing, and a United States filter
+  // dropped them (search canary, 2026-10-04 and -05). The tell, whatever the order: every two-letter
+  // segment is a US state, they name at least two different states (or one that is no country code,
+  // like TX), they make up a fair share of the segments, and no other country is named.
+  // "Berlin, DE, Munich, DE" (one repeated code that is also a country) stays ambiguous.
+  const codes = segments.filter((seg) => /^[a-z]{2}$/.test(seg) && seg !== 'us');
+  // Four parts at least: "Chennai, TN, IN" is Tamil Nadu, India, though both codes are US states.
+  const usCityList = codes.length >= 2 && segments.length >= 4
+    && codes.length * 3 >= segments.length
+    && codes.every((seg) => US_STATES.has(seg))
+    && (new Set(codes).size >= 2 || codes.some((seg) => !NAME.has(seg)))
+    && [...found].every((c) => c === 'us');
   if (usCityList) found.add('us');
   else if (last && /^[a-z]{2}$/.test(last) && NAME.has(last)) {
     // The veto applies only to the bare "City, ST" shape, which is how US locations are written

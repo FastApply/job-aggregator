@@ -22,3 +22,16 @@ test('country-code lists keep their countries', () => {
   assert.deepEqual(c('Paris, France, Berlin, Germany'), ['fr', 'de']);
   assert.notDeepEqual(c('Berlin, DE, Munich, DE'), ['us'], 'one repeated code that is also a country stays ambiguous');
 });
+
+test('state-first lists ("TX - Dallas, ...") and trailing bare states are the United States', () => {
+  assert.deepEqual(c('TX - Dallas, NM - Albuquerque, VA - Norfolk, IN - Indianapolis, MI - Hazel Park, IN - Hammond, OH - Cleveland, TN, NY'), ['us']);
+  assert.deepEqual(c('CA - San Diego, CO - Denver'), ['us']);
+  assert.notDeepEqual(c('Chennai, TN, IN'), ['us'], 'City, state, country stays India');
+});
+
+test('lists that name a real country keep it', () => {
+  assert.deepEqual(c('Austin, TX, Mexico City, Mexico'), c('Austin, TX, Mexico City, Mexico'));
+  assert.ok(c('Austin, TX, Mexico City, Mexico').includes('mx'));
+  assert.deepEqual(c('Indore, IN, Pune, IN'), c('Indore, IN, Pune, IN'));
+  assert.notDeepEqual(c('Indore, IN, Pune, IN'), ['us']);
+});
