@@ -26,6 +26,7 @@ const netflix = require('./netflix');
 const google = require('./google');
 const varbi = require('./varbi');
 const reachmee = require('./reachmee');
+const jobylon = require('./jobylon');
 
 const adapters = {
   greenhouse,
@@ -55,6 +56,7 @@ const adapters = {
   google,
   varbi,
   reachmee,
+  jobylon,
 };
 
 function getAdapter(atsName) {
