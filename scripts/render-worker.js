@@ -185,6 +185,14 @@ let demandRunning = false;
 // Ship changed jobs into the search index. Driven by the index_dirty_at outbox column, so it
 // picks up writes from every source — this worker, the local crawler fleet, and the one-off
 // scripts. No-ops entirely when MEILI_HOST is unset.
+//
+// How often. Every Meilisearch indexing run on the 7.6M-document index costs ~50s whatever its size
+// (measured 2026-10-07: 59 runs in an hour, ~230 docs each, the engine indexing 91% of the time).
+// A 60s tick shipped a few hundred docs per run and kept the engine busy almost without pause, so
+// searches competed with indexing for CPU: multi-role searches timed out, fell back to Postgres,
+// and the search canary saw the endpoint unreachable. A 5-minute tick ships the same documents in a
+// fifth of the runs. New and changed jobs reach search within ~5 minutes instead of ~1.
+const MEILI_SYNC_INTERVAL_MS = parseInt(process.env.MEILI_SYNC_INTERVAL_MS || String(5 * 60 * 1000), 10);
 let meiliSyncRunning = false;
 async function runMeiliSync() {
   if (meiliSyncRunning) return;
@@ -196,7 +204,7 @@ async function runMeiliSync() {
     logger.error({ err: e.message }, 'meili sync');
   } finally {
     meiliSyncRunning = false;
-    setTimeout(runMeiliSync, 60 * 1000);
+    setTimeout(runMeiliSync, MEILI_SYNC_INTERVAL_MS);
   }
 }
 
