@@ -35,3 +35,17 @@ test('lists that name a real country keep it', () => {
   assert.deepEqual(c('Indore, IN, Pune, IN'), c('Indore, IN, Pune, IN'));
   assert.notDeepEqual(c('Indore, IN, Pune, IN'), ['us']);
 });
+
+test('a street address before a US city and state code is the United States', () => {
+  assert.deepEqual(c('Urbandale, Douglas Ave, Urbandale, IA'), ['us']);
+  assert.deepEqual(c('123 Main St, Urbandale, IA'), ['us']);
+  assert.deepEqual(c('Austin, Congress Ave, Austin, TX'), ['us']);
+  assert.deepEqual(c('Urbandale, Douglas Ave, Urbandale, IA 50322'), ['us']);
+  assert.deepEqual(c('Urbandale, IA 50322'), ['us']);
+});
+
+test('a trailing code that is also a country keeps the country reading', () => {
+  assert.deepEqual(c('Toronto, ON, CA'), ['ca']);
+  assert.deepEqual(c('Chennai, Anna Salai, Chennai, TN'), ['tn']);
+  assert.deepEqual(c('Paris, Rue de Rivoli, Paris, FR'), ['fr']);
+});

@@ -464,7 +464,9 @@ function usStateReading(segments, rawText) {
   // Several addresses joined by ";" or "|" share one comma segment: "Toronto, ON, Canada;
   // Chicago, IL, USA". Only the last one belongs to the trailing state.
   const tail = (seg) => seg.split(/[;|]/).pop();
-  const clean = segments.map((seg) => tail(seg).replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim());
+  // A ZIP after the state code ("Urbandale, IA 50322") belongs to the state.
+  const clean = segments.map((seg) => tail(seg).replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^([a-z]{2}) \d{5}(?: ?\d{4})?$/, '$1'));
   let end = clean.length;
   let usTail = false;
   while (end > 0) {
@@ -510,7 +512,12 @@ function usStateReading(segments, rawText) {
   // and the job got no country at all — invisible to location=United States (the search canary
   // caught "US - Austin, TX" on 2026-10-04; ~16k live jobs have this shape).
   const usHead = end === 3 && LOOKUP.get(clean[0]) === 'us' && !US_STATE_NAMES.has(clean[0]);
-  if (!usTail && !usHead && end !== 2 && !startsAddress) return null;
+  // A street address before the city ("Urbandale, Douglas Ave, Urbandale, IA") makes three or
+  // more parts. The 3+ guard exists because there the trailing code is usually a country ("Toronto,
+  // ON, CA"), but a state code that is no country code at all (IA, TX, OH, NY) cannot be one, and
+  // the job got no country — the search canary lost it on 2026-10-10.
+  const stateOnly = !NAME.has(st);
+  if (!usTail && !usHead && end !== 2 && !startsAddress && !stateOnly) return null;
   if (usTail || usHead) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
 
   const rawLast = String(rawText).split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean).pop() || '';
