@@ -67,7 +67,7 @@ async function get(url) {
 
 async function fetchJobs(companyId) {
   const html = await get(listUrl(companyId));
-  if (!/jobylon-job-list|jobylon-powered-by/.test(html)) throw new Error('Jobylon: no job widget (not found)');
+  if (!/jobylon-job-list|jobylon-powered-by/.test(html)) throw new Error('Jobylon: unexpected page, no job widget (retry)');
   const items = parseList(html);
 
   // A job page that fails keeps the widget's title and town, so one bad page never drops a live

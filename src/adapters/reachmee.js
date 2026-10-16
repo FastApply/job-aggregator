@@ -115,7 +115,7 @@ async function fetchLegacy(slug) {
   // ("Det finns inga lediga tjänster att söka"): that is zero jobs, not a broken board.
   const items = parseLegacyList(html)
     || (/jobsTableClass/.test(html) && /inga lediga|no (?:vacancies|available|open)|ingen ledig/i.test(html) ? [] : null);
-  if (!items) throw new Error('ReachMee: no job table (not found)');
+  if (!items) throw new Error('ReachMee: unexpected page, no job table (retry)');
   const customer = (listUrl.match(/\/ext\/[A-Z0-9]+\/(\d+)\//i) || [])[1] || 'x';
   return detailAndShape(items, parseLegacyDetail, (it) => `reachmee_${customer}_${it.id}`, defaultTown);
 }
@@ -150,7 +150,7 @@ async function fetchJobs(clientname) {
   if (isLegacy(clientname)) return fetchLegacy(clientname);
   const listHtml = await get(`${baseUrl(clientname)}/jobs`);
   // A site with zero jobs still renders the list header; one with no list at all is not a board.
-  if (!/at-jobs-list|Tjänst|Position/i.test(listHtml)) throw new Error('ReachMee: no job list (not found)');
+  if (!/at-jobs-list|Tjänst|Position/i.test(listHtml)) throw new Error('ReachMee: unexpected page, no job list (retry)');
   const items = parseList(listHtml);
   return detailAndShape(items, parseDetail, (it) => `reachmee_${it.id}`);
 }
