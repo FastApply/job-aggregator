@@ -62,7 +62,7 @@ async function get(url, as = 'text') {
 async function fetchJobs(clientname) {
   const base = baseUrl(clientname);
   const xml = await get(`${base}/what:rssfeed/`);
-  if (!/<rss|<channel/i.test(xml)) throw new Error('Varbi: no RSS feed (not found)');
+  if (!/<rss|<channel/i.test(xml)) throw new Error('Varbi: unexpected page instead of the RSS feed (retry)');
   const items = parseFeed(xml);
 
   // Details, a few at a time: a page that fails keeps the feed's title and link, so one bad page
