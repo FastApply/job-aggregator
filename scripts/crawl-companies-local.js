@@ -81,8 +81,11 @@ async function crawlCompany(co) {
   const adapter = getAdapter(co.ats);
   // careerUrl lets the workday adapter use the pod/site already on the row; others ignore it.
   const result = await withTimeout(adapter.fetchJobs(co.ats_slug, { careerUrl: co.career_url }), FETCH_TIMEOUT, co.ats);
-  // A tenant that answers again has its discovery-miss count cleared.
-  if (co.error_message && isDiscoveryMiss(co.error_message)) {
+  // A company that answers again has its error cleared — any error, not only a discovery miss (whose
+  // count this also resets). Old transient errors ("Workable HTTP 403" from May, "Breezy HTTP 403")
+  // otherwise stayed on rows that had crawled fine for months: on 2026-10-17, 59 of 67 Breezy rows
+  // flagged 403 had been refreshed in the past day.
+  if (co.error_message) {
     await query('UPDATE companies SET error_message = NULL WHERE id = ?', [co.id]).catch(() => {});
   }
   const incoming = (result && (result.jobs || result)) || [];
