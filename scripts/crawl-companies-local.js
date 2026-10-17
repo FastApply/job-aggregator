@@ -38,6 +38,7 @@ const FETCH_TIMEOUT = parseInt(process.env.FETCH_TIMEOUT || '60000');
 const DELAY_MS = parseInt(process.env.DELAY_MS || '0'); // per-company delay to stay under ATS rate limits
 const ONCE = process.env.ONCE === '1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const { runPool } = require('../src/utils/rolling-pool');
 
 // A dead board / malformed slug (404, 400, gone) will never succeed — mark it
 // 'failed' so it drops out of the queue instead of re-looping forever. Rate limits
@@ -115,57 +116,58 @@ async function crawlCompany(co) {
   let totalCo = 0, totalAdded = 0, totalRemoved = 0, errors = 0, retired = 0, emptyRounds = 0;
   const t0 = Date.now();
 
-  while (true) {
-    let batch;
-    try { batch = await claimBatch(); }
-    catch (e) { console.error('claim failed:', e.message); await new Promise(r => setTimeout(r, 10000)); continue; }
-
-    if (!batch.length) {
-      if (ONCE) break;
+  // A rolling pool (src/utils/rolling-pool.js): a slot that finishes takes the next company at
+  // once, instead of the whole batch waiting for its slowest tenant.
+  let lastReport = Date.now();
+  await runPool({
+    concurrency: CONCURRENCY,
+    once: ONCE,
+    claim: async () => {
+      const rows = await claimBatch();
+      if (rows.length) emptyRounds = 0;
+      return rows;
+    },
+    onClaimError: async (e) => { console.error('claim failed:', e.message); await sleep(10000); },
+    idle: async () => {
       emptyRounds++;
-      if (emptyRounds % 5 === 1) console.log(`  queue drained — ${totalCo} companies crawled, +${totalAdded} jobs. idling 60s...`);
-      await new Promise(r => setTimeout(r, 60000));
-      continue;
-    }
-    emptyRounds = 0;
-
-    let i = 0;
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batch.length) }, async () => {
-      while (i < batch.length) {
-        const co = batch[i++];
-        try { const r = await crawlCompany(co); totalCo++; totalAdded += r.added; }
-        catch (e) {
-          errors++; totalCo++;
-          try {
-            // When proxied, a 404/400 is unreliable (IP/geo-dependent), NOT proof the
-            // company is dead — so never retire; just re-due and retry with a new IP.
-            if (isDiscoveryMiss(e.message)) {
-              // Counted, not fatal: retire only after DISCOVERY_MISS_LIMIT misses in a row, and
-              // space the retries so a throttled window cannot burn through them.
-              const { retire, message } = discoveryMissOutcome(co.error_message, e.message);
-              if (retire && !proxy.enabled) {
-                await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [message, co.id]);
-                retired++;
-              } else {
-                await query(`UPDATE companies SET error_message = ?, last_synced_at = NOW() + INTERVAL '${Math.max(0, DISCOVERY_RETRY_MIN - STALE_MIN)} minutes' WHERE id = ?`, [message, co.id]);
-              }
-            } else if (isPermanentError(e.message) && !proxy.enabled) {
-              // dead board / bad slug — retire it so it stops clogging the queue
-              await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [String(e.message).slice(0, 200), co.id]);
+      if (emptyRounds % (5 * CONCURRENCY) === 1) console.log(`  queue drained — ${totalCo} companies crawled, +${totalAdded} jobs. idling 60s...`);
+      await sleep(60000);
+    },
+    work: async (co) => {
+      try { const r = await crawlCompany(co); totalCo++; totalAdded += r.added; }
+      catch (e) {
+        errors++; totalCo++;
+        try {
+          // When proxied, a 404/400 is unreliable (IP/geo-dependent), NOT proof the
+          // company is dead — so never retire; just re-due and retry with a new IP.
+          if (isDiscoveryMiss(e.message)) {
+            // Counted, not fatal: retire only after DISCOVERY_MISS_LIMIT misses in a row, and
+            // space the retries so a throttled window cannot burn through them.
+            const { retire, message } = discoveryMissOutcome(co.error_message, e.message);
+            if (retire && !proxy.enabled) {
+              await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [message, co.id]);
               retired++;
             } else {
-              // transient (rate limit / timeout / drop) — re-due in ~10 min
-              await query(`UPDATE companies SET last_synced_at = NOW() - INTERVAL '${Math.max(0, STALE_MIN - 10)} minutes' WHERE id = ?`, [co.id]);
+              await query(`UPDATE companies SET error_message = ?, last_synced_at = NOW() + INTERVAL '${Math.max(0, DISCOVERY_RETRY_MIN - STALE_MIN)} minutes' WHERE id = ?`, [message, co.id]);
             }
-          } catch { /* ignore */ }
-        }
-        if (DELAY_MS) await sleep(DELAY_MS);
+          } else if (isPermanentError(e.message) && !proxy.enabled) {
+            // dead board / bad slug — retire it so it stops clogging the queue
+            await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [String(e.message).slice(0, 200), co.id]);
+            retired++;
+          } else {
+            // transient (rate limit / timeout / drop) — re-due in ~10 min
+            await query(`UPDATE companies SET last_synced_at = NOW() - INTERVAL '${Math.max(0, STALE_MIN - 10)} minutes' WHERE id = ?`, [co.id]);
+          }
+        } catch { /* ignore */ }
       }
-    }));
-
-    const mins = ((Date.now() - t0) / 60000).toFixed(1);
-    console.log(`  +batch ${batch.length} | total companies ${totalCo} | jobs added ${totalAdded} | errors ${errors} | retired ${retired} | ${mins}m | ${(totalCo / Math.max(1, (Date.now() - t0) / 60000)).toFixed(0)}/min`);
-  }
+      if (DELAY_MS) await sleep(DELAY_MS);
+      if (Date.now() - lastReport > 5 * 60000) {
+        lastReport = Date.now();
+        const mins = ((Date.now() - t0) / 60000).toFixed(1);
+        console.log(`  total companies ${totalCo} | jobs added ${totalAdded} | errors ${errors} | retired ${retired} | ${mins}m | ${(totalCo / Math.max(1, (Date.now() - t0) / 60000)).toFixed(0)}/min`);
+      }
+    },
+  });
   console.log(`DONE: ${totalCo} companies | ${totalAdded} jobs added | ${errors} errors`);
   process.exit(0);
 })().catch(e => { console.error('FATAL', e); process.exit(1); });
