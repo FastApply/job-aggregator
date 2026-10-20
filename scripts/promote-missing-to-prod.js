@@ -43,6 +43,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Pool } = require('pg');
+const sandboxGuard = require('../src/utils/sandbox-guard');
 
 const LOCAL_URL = process.env.LOCAL_URL || 'postgres://codev@localhost:5432/jobs_local';
 const PROD_URL = process.env.PROD_URL || (() => {
@@ -267,7 +268,7 @@ async function pinHostToIp(url) {
   console.log(`candidate companies: ${n(work.length)}\n`);
 
   const stats = { companies: 0, companiesCreated: 0, companiesMatched: 0,
-    jobsExamined: 0, jobsAlreadyInProd: 0, jobsInserted: 0, jobsWouldInsert: 0, errors: 0,
+    jobsExamined: 0, jobsAlreadyInProd: 0, jobsInserted: 0, jobsWouldInsert: 0, sandboxSkipped: 0, errors: 0,
     // Tally by message, not just a count. The 2026-09-11 17:00 cycle reported 50,608 errors
     // against 55,609 employers -- 91% -- and printed FIVE of them, because the logger below
     // is capped at `errors <= 5`. A bare count cannot distinguish 'prod is timing out' from
@@ -314,6 +315,14 @@ async function pinHostToIp(url) {
     let attempt = 0;
     for (;;) {
     try {
+      // 0. ATS demo/sandbox boards are not employers (FA-053). Never promote one to production:
+      // skip the company outright, which also keeps its row from being created there.
+      if (sandboxGuard.judgePosting({ ats: c.ats, slug: c.ats_slug, careerUrl: c.career_url },
+        { source: 'promote-missing-to-prod' }).reject) {
+        stats.sandboxSkipped++;
+        done.add(c.local_id);
+        break;
+      }
       // 1. Does prod know this company?
       let prodCompanyId = prodCompanyIndex.get(`${c.ats}|${String(c.ats_slug).toLowerCase()}`) || null;
 
@@ -365,6 +374,8 @@ async function pinHostToIp(url) {
       for (const j of mine) {
         const k = urlKey(j.url);
         if (!k || have.has(k)) { stats.jobsAlreadyInProd++; continue; }
+        if (sandboxGuard.judgePosting({ ats: c.ats, slug: c.ats_slug, careerUrl: c.career_url, url: j.url },
+          { source: 'promote-missing-to-prod' }).reject) { stats.sandboxSkipped++; continue; }
         have.add(k);                       // guard against dupes within this batch too
         missing.push(j);
       }
@@ -442,6 +453,7 @@ async function pinHostToIp(url) {
   console.log(`  companies ${APPLY ? 'CREATED' : 'to create'}      : ${n(stats.companiesCreated)}`);
   console.log(`  jobs examined           : ${n(stats.jobsExamined)}`);
   console.log(`  jobs already in prod    : ${n(stats.jobsAlreadyInProd)}  <- deduped by URL`);
+  console.log(`  sandbox boards/jobs skipped: ${n(stats.sandboxSkipped)}  <- ATS demo tenants (FA-053)`);
   console.log(`  jobs ${APPLY ? 'INSERTED' : 'to insert'}          : ${n(APPLY ? stats.jobsInserted : stats.jobsWouldInsert)}`);
   console.log(`  transient retries       : ${n(stats.retries)}`);
   console.log(`  errors                  : ${n(stats.errors)}`);

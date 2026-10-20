@@ -251,6 +251,22 @@ node scripts/check-dead-jobs.js --ats=zoho --limit=50
 
 **`dedup-ats-duplicates.js`** — deduplicate rows sharing `(ats, ats_slug)`.
 
+**Sandbox boards (FA-053)** — ATS vendors run demo tenants; real candidates' applications went into
+six of them. The rule lives in `src/utils/sandbox-board.js`, the behaviour switch (`SANDBOX_REJECT`,
+default enforce) in `src/utils/sandbox-guard.js`, and every path that brings jobs in asks it:
+`syncForCompany` (so every crawler and feed loader), `crawl-companies-local.js` (also what the
+Render worker forks), `demand-crawl.js`, `crawl-workable-marketplace.js`, `fetch-jobloo.js` and the
+three local-to-prod promoters. Bulk SQL imports cannot call it: run the check after one.
+```bash
+npm run check:sandbox                      # read-only: live sandbox postings first seen in the last 30 days; exit 1 if any
+npm run check:sandbox -- --list-matches    # every company whose NAME matches: the review list before changing the rule
+npm run retire:sandbox                     # DRY RUN: which live jobs would be retired
+npm run retire:sandbox -- --apply --confirm=<db-host>
+```
+Run `retire:sandbox --apply` only once the guard is live on every crawler, or the next sync makes
+the jobs live again. `check:sandbox` afterwards must report 0 live. Every retired row carries
+`removed_reason` starting `sandbox board (FA-053)`, which is also the undo key (see the script header).
+
 ### Search index — `meili-init.js`, `meili-backfill.js`
 
 ```bash

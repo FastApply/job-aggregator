@@ -7,6 +7,7 @@
 const { query } = require('../db/connection');
 const { classifyJob } = require('../utils/classify');
 const logger = require('../logger');
+const sandboxGuard = require('../utils/sandbox-guard');
 
 const API_BASE = 'https://jobs.workable.com/api/v1';
 const JOBS_PER_PAGE = 20; // API returns 20 per page
@@ -166,6 +167,16 @@ async function crawlWorkableMarketplace() {
       if (jobs.length === 0) break;
 
       for (const job of jobs) {
+        // A Workable demo/sandbox account (FA-053) is not an employer. This path inserts company
+        // and job rows itself, so it asks the guard itself. The company slug here is a marketplace
+        // pseudo-slug (wjb_<uuid>), so the board is judged from the company's own URL and the
+        // posting's.
+        if (sandboxGuard.judgePosting(
+          { ats: 'workable', careerUrl: job.company && job.company.url, url: job.url },
+          { source: 'workable-marketplace' }).reject) {
+          totalProcessed++;
+          continue;
+        }
         try {
           // Get or create company
           const companyKey = job.company?.id;

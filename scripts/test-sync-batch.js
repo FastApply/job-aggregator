@@ -138,7 +138,109 @@ async function main() {
     assert.strictEqual(res.updated, 0);
   });
 
-  // 8. Timing signal: this is the whole point of the change.
+  // 8. FA-053: ATS demo/sandbox boards are not employers. Every crawler and feed loader funnels
+  // through syncForCompany, so this is where the guard has to hold. SANDBOX_REJECT is unset in
+  // the first three (the default is enforce) and set per case in the last.
+  const withMode = async (mode, fn) => {
+    const prev = process.env.SANDBOX_REJECT;
+    if (mode === undefined) delete process.env.SANDBOX_REJECT; else process.env.SANDBOX_REJECT = mode;
+    try { await fn(); } finally { if (prev === undefined) delete process.env.SANDBOX_REJECT; else process.env.SANDBOX_REJECT = prev; }
+  };
+  const addCompany = async (ats, slug, careerUrl) => {
+    await query('INSERT INTO companies (career_url, domain, ats, ats_slug, company_name) VALUES (?, ?, ?, ?, ?)',
+      [careerUrl, new URL(careerUrl).hostname, ats, slug, slug]);
+    const { rows: [co] } = await query('SELECT id FROM companies WHERE career_url = ?', [careerUrl]);
+    return co.id;
+  };
+  const stored = async (companyId) =>
+    Number((await query('SELECT COUNT(*) AS n FROM jobs WHERE company_id = ?', [companyId])).rows[0].n);
+
+  await check('FA-053: a demo board stores nothing by default', async () => {
+    await withMode(undefined, async () => {
+      const id = await addCompany('lever', 'leverdemo-8', 'https://jobs.lever.co/leverdemo-8');
+      const res = await jobsRepo.syncForCompany(id, 'lever', [mk(9001, { url: 'https://jobs.lever.co/leverdemo-8/9001' })]);
+      assert.strictEqual(res.added, 0);
+      assert.strictEqual(res.rejected, 1);
+      assert.strictEqual(await stored(id), 0);
+    });
+  });
+
+  await check('FA-053: a real employer with "sandbox" in its name is stored', async () => {
+    await withMode(undefined, async () => {
+      const id = await addCompany('greenhouse', 'sandboxvr', 'https://boards.greenhouse.io/sandboxvr');
+      const res = await jobsRepo.syncForCompany(id, 'greenhouse', [mk(9002, { url: 'https://boards.greenhouse.io/sandboxvr/jobs/9002' })]);
+      assert.strictEqual(res.rejected, 0);
+      assert.strictEqual(await stored(id), 1);
+    });
+  });
+
+  await check('FA-053: a feed company keeps its real postings and loses only the demo ones', async () => {
+    await withMode(undefined, async () => {
+      const id = await addCompany('simplify', 'feed-employer', 'https://simplify.jobs/c/feed-employer');
+      const res = await jobsRepo.syncForCompany(id, 'simplify', [
+        mk(9003, { url: 'https://boards.greenhouse.io/someemployer/jobs/9003' }),
+        mk(9004, { url: 'https://acme-demo.recruitee.com/o/qa-engineer' }),
+        mk(9005, { url: 'https://weedmansandbox.applytojob.com/apply/x/y' }),
+      ]);
+      assert.strictEqual(res.rejected, 2);
+      assert.strictEqual(await stored(id), 1);
+    });
+  });
+
+  await check('FA-053: SANDBOX_REJECT=log stores everything and SANDBOX_REJECT=off too', async () => {
+    for (const mode of ['log', 'off']) {
+      await withMode(mode, async () => {
+        const id = await addCompany('lever', `leverdemo-${mode}`, `https://jobs.lever.co/leverdemo-${mode}`);
+        const res = await jobsRepo.syncForCompany(id, 'lever', [mk(9006, { url: `https://jobs.lever.co/leverdemo-${mode}/9006` })]);
+        assert.strictEqual(res.rejected, 0, `${mode}: rejected=${res.rejected}`);
+        assert.strictEqual(await stored(id), 1, `${mode}: stored`);
+      });
+    }
+  });
+
+  await check('FA-053: a company handed in by the caller is used, with no lookup of its own', async () => {
+    // Company id 999999 does not exist, so a lookup by id would find nothing; and the posting URL
+    // carries no marker, so only the handed-in slug can reject it. Rejecting it proves the
+    // handed-in company was the evidence.
+    await withMode(undefined, async () => {
+      const res = await jobsRepo.syncForCompany(999999, 'lever', [mk(9200, { url: 'https://example.com/jobs/9200' })],
+        { company: { ats_slug: 'leverdemo-8', career_url: 'https://jobs.lever.co/leverdemo-8' } });
+      assert.strictEqual(res.rejected, 1);
+      assert.strictEqual(res.added, 0);
+    });
+  });
+
+  await check('FA-053: SANDBOX_REJECT=off ignores a handed-in sandbox company', async () => {
+    await withMode('off', async () => {
+      const id = await addCompany('lever', 'plain-co', 'https://jobs.lever.co/plain-co');
+      const res = await jobsRepo.syncForCompany(id, 'lever', [mk(9201, { url: 'https://jobs.lever.co/plain-co/9201' })],
+        { company: { ats_slug: 'leverdemo-8', career_url: 'https://jobs.lever.co/leverdemo-8' } });
+      assert.strictEqual(res.rejected, 0);
+      assert.strictEqual(await stored(id), 1);
+    });
+  });
+
+  await check('FA-053: a demo board is not retired by absence when the guard empties its batch', async () => {
+    // The existing rows of a rejected board must be left for the retire script, not silently
+    // aged out by the absence counter reading an emptied batch as "everything closed".
+    await withMode('off', async () => {
+      const id = await addCompany('lever', 'leverdemo-keep', 'https://jobs.lever.co/leverdemo-keep');
+      await jobsRepo.syncForCompany(id, 'lever', [mk(9007, { url: 'https://jobs.lever.co/leverdemo-keep/9007' })]);
+    });
+    await withMode(undefined, async () => {
+      const { rows: [co] } = await query("SELECT id FROM companies WHERE ats_slug = 'leverdemo-keep'");
+      // Job 9007 is stored. Each sync below carries a DIFFERENT demo posting, so 9007 is absent
+      // from every batch: unguarded, the absence counter would tick for it on each one. Guarded,
+      // the batch is emptied, which the counter reads as "the adapter returned nothing" and skips.
+      for (let i = 0; i < 5; i++) await jobsRepo.syncForCompany(co.id, 'lever', [mk(9100 + i, { url: `https://jobs.lever.co/leverdemo-keep/${9100 + i}` })]);
+      const { rows } = await query('SELECT removed_at, absent_syncs FROM jobs WHERE company_id = ? AND external_id = ?', [co.id, 'job-9007']);
+      assert.strictEqual(rows.length, 1, 'the stored job is still there');
+      assert.strictEqual(rows[0].removed_at, null, 'must not be retired by the sync');
+      assert.strictEqual(Number(rows[0].absent_syncs), 0, `must not even be counted absent (absent_syncs=${rows[0].absent_syncs})`);
+    });
+  });
+
+  // 9. Timing signal: this is the whole point of the change.
   const N = 1000;
   const bulk = Array.from({ length: N }, (_, i) => mk(50000 + i));
   const t0 = Date.now();
