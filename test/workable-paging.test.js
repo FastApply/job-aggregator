@@ -1,11 +1,14 @@
 'use strict';
 /** Workable's v3 list is paged 10 at a time (nextPage token sent back as { token }). */
-process.env.WORKABLE_PAGE_DELAY_MS = '0';
-process.env.WORKABLE_BLOCK_PAUSE_MS = '0';
+process.env.WORKABLE_MIN_GAP_MS = '20';
 process.env.WORKABLE_MAX_PAGES = '5';
+process.env.WORKABLE_MAX_BLOCK_WAIT_MS = '150';
+process.env.WORKABLE_BLOCK_WAIT_MS = '80';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { fetchListings } = require('../src/adapters/workable');
+const workable = require('../src/adapters/workable');
+const { fetchListings } = workable;
+test.beforeEach(() => workable._reset());
 const fs = require('fs');
 const path = require('path');
 // the crawler's own rule, read from the script (it runs on require)
@@ -40,7 +43,7 @@ test('workable: stops at the page ceiling and says the list is capped', async ()
 
 test('workable: a block (403/429) mid-list fails the whole crawl as a retry, not a dead board', async () => {
   for (const status of [403, 429]) {
-    const pages = [page(codes(0, 10), 'T1'), { ok: false, status }];
+    const pages = [page(codes(0, 10), 'T1'), { ok: false, status, headers: new Headers() }];
     await assert.rejects(fetchListings('acme', async () => pages.shift()), (e) => {
       assert.match(e.message, /rate limited/);
       assert.equal(isPermanentError(e.message), false);
@@ -51,4 +54,44 @@ test('workable: a block (403/429) mid-list fails the whole crawl as a retry, not
 
 test('workable: a 404 account is still a dead board', async () => {
   await assert.rejects(fetchListings('gone', async () => ({ ok: false, status: 404 })), (e) => isPermanentError(e.message));
+});
+
+test('workable: requests are spaced by the minimum gap', async () => {
+  const at = [];
+  const pages = [page(codes(0, 10), 'T1'), page(codes(10, 10), 'T2'), page(codes(20, 5), undefined)];
+  await fetchListings('acme', async () => { at.push(Date.now()); return pages.shift(); });
+  for (let i = 1; i < at.length; i++) assert.ok(at[i] - at[i - 1] >= 18, `gap ${at[i] - at[i - 1]} ms`);
+});
+
+test('workable: a block holds every later request until Retry-After, capped', async () => {
+  // Retry-After: 1 s, capped to the 150 ms test ceiling
+  await assert.rejects(fetchListings('acme', async () => ({ ok: false, status: 429, headers: new Headers({ 'retry-after': '1' }) })));
+  const t0 = Date.now();
+  await workable.waitUntilReady();
+  const waited = Date.now() - t0;
+  assert.ok(waited >= 130 && waited < 400, `waited ${waited} ms`);
+  let sentAt = 0;
+  await fetchListings('acme', async () => { sentAt = Date.now(); return page(codes(0, 3), undefined); });
+  assert.ok(sentAt >= t0 + 130);
+});
+
+test('workable: a 403 without Retry-After waits the default', async () => {
+  await assert.rejects(fetchListings('acme', async () => ({ ok: false, status: 403, headers: new Headers() })), /pausing/);
+  const t0 = Date.now();
+  await workable.waitUntilReady();
+  assert.ok(Date.now() - t0 >= 60);
+});
+
+test('workable: fetchJobs makes only the list requests (no per-crawl widget call)', async () => {
+  const urls = [];
+  const real = global.fetch;
+  global.fetch = async (url) => { urls.push(String(url)); return page(codes(0, 2), undefined); };
+  try { const r = await workable.fetchJobs('acme'); assert.equal(r.jobs.length, 2); assert.equal(r.meta.capped, false); }
+  finally { global.fetch = real; }
+  assert.deepEqual(urls, ['https://apply.workable.com/api/v3/accounts/acme/jobs']);
+});
+
+test('workable: the crawler waits out a block before timing the fetch, with the adapter\'s own timeout', () => {
+  assert.match(crawler, /if \(adapter\.waitUntilReady\) await adapter\.waitUntilReady\(\);\s*\n\s*const result = await withTimeout\(adapter\.fetchJobs\([^;]*adapter\.fetchTimeoutMs \|\| FETCH_TIMEOUT/);
+  assert.ok(workable.fetchTimeoutMs > 60000);
 });
