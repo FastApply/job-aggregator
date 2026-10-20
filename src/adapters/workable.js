@@ -1,23 +1,49 @@
 const logger = require('../logger');
 
-async function fetchJobs(clientname) {
-  // v3 API: single POST, returns all jobs — no detail calls during sync
-  // Descriptions come from the backfill task to avoid rate limiting
-  const listRes = await fetch(
-    `https://apply.workable.com/api/v3/accounts/${encodeURIComponent(clientname)}/jobs`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-      signal: AbortSignal.timeout(15000),
+const PAGE_DELAY_MS = parseInt(process.env.WORKABLE_PAGE_DELAY_MS || '300');
+const MAX_PAGES = parseInt(process.env.WORKABLE_MAX_PAGES || '200'); // 10 jobs a page
+const BLOCK_PAUSE_MS = parseInt(process.env.WORKABLE_BLOCK_PAUSE_MS || '60000');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The v3 list returns 10 jobs a page and a `nextPage` token; the token goes back as `{ token }`.
+// Reading only the first page silently dropped every job past the tenth.
+async function fetchListings(clientname, fetchImpl = fetch) {
+  const listings = [];
+  let token = null;
+  let capped = false;
+  for (let page = 0; ; page++) {
+    if (page >= MAX_PAGES) { capped = true; break; }
+    if (page) await sleep(PAGE_DELAY_MS);
+    const res = await fetchImpl(
+      `https://apply.workable.com/api/v3/accounts/${encodeURIComponent(clientname)}/jobs`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(token ? { token } : {}),
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+    // Workable answers a burst from one IP with 429 or 403 (the same accounts load fine minutes
+    // later). Pause this crawler before failing so the next company doesn't hit the block too;
+    // the error stays transient, so the company is retried and its jobs are untouched.
+    if (res.status === 429 || res.status === 403) {
+      if (BLOCK_PAUSE_MS) await sleep(BLOCK_PAUSE_MS);
+      throw new Error(`Workable rate limited (${res.status}) — will retry next cycle`);
     }
-  );
-  if (listRes.status === 429) {
-    throw new Error('Workable rate limited (429) — will retry next cycle');
+    if (!res.ok) throw new Error(`Workable HTTP ${res.status}`);
+    const data = await res.json();
+    const seen = new Set(listings.map((l) => l.shortcode));
+    for (const l of data.results || []) if (!seen.has(l.shortcode)) listings.push(l);
+    token = data.nextPage;
+    if (!token || !(data.results || []).length) break;
   }
-  if (!listRes.ok) throw new Error(`Workable HTTP ${listRes.status}`);
-  const listData = await listRes.json();
-  const listings = listData.results || [];
+  return { listings, capped };
+}
+
+async function fetchJobs(clientname) {
+  // v3 API, paged — no detail calls during sync.
+  // Descriptions come from the backfill task to avoid rate limiting
+  const { listings, capped } = await fetchListings(clientname);
 
   const jobs = listings.map(listing => {
     const loc = listing.location || {};
@@ -54,7 +80,7 @@ async function fetchJobs(clientname) {
     }
   } catch {}
 
-  return { jobs, meta: { companyName, logoUrl } };
+  return { jobs, meta: { companyName, logoUrl, capped } };
 }
 
 async function fetchCompanyMeta(clientname) {
@@ -86,4 +112,4 @@ async function fetchCompanyMeta(clientname) {
   return null;
 }
 
-module.exports = { fetchJobs, fetchCompanyMeta };
+module.exports = { fetchJobs, fetchListings, fetchCompanyMeta };
