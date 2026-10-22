@@ -23,6 +23,10 @@ const jobvite = require('./jobvite');
 const varbi = require('./varbi');
 const reachmee = require('./reachmee');
 const jobylon = require('./jobylon');
+const visma = require('./visma');
+const recman = require('./recman');
+const hrmanager = require('./hrmanager');
+const talentadore = require('./talentadore');
 
 const adapters = {
   greenhouse,
@@ -50,6 +54,10 @@ const adapters = {
   varbi,
   reachmee,
   jobylon,
+  visma,
+  recman,
+  hrmanager,
+  talentadore,
 };
 
 function getAdapter(atsName) {

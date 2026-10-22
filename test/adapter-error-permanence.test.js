@@ -14,7 +14,7 @@ const crawler = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'crawl-com
 const rule = new RegExp(crawler.match(/const isPermanentError = \(msg\) => \/(.+)\/i\.test/)[1], 'i');
 
 test('an unexpected page is retried; a real 404 is permanent', () => {
-  for (const f of ['varbi', 'reachmee', 'jobylon']) {
+  for (const f of ['varbi', 'reachmee', 'jobylon', 'visma', 'recman', 'hrmanager', 'talentadore']) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', `${f}.js`), 'utf8');
     const messages = [...src.matchAll(/throw new Error\('([^']+)'\)/g)].map((m) => m[1]);
     for (const msg of messages.filter((m) => /unexpected page/.test(m))) {
