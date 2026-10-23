@@ -15,6 +15,8 @@ const PAGE_SIZE = 25; // fixed by the API
 const MAX_PAGES = 400; // 10,000 jobs
 const PAGE_DELAY_MS = 150;
 const SESSION_MS = 15 * 60 * 1000;
+// 400 pages of 25 at ~0.5 s each, plus the career page: more than the crawler's default minute.
+const fetchTimeoutMs = 10 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** "gaylor" -> {ns: 'gaylor', board: 'CANDIDATEPORTAL'}; "sobeys/SobeysRSCExternalSite" keeps its board. */
@@ -127,4 +129,4 @@ async function fetchJobs(slug) {
   return { jobs, meta: { companyName: (info && info.candidateCorrespondenceClientName) || null, logoUrl: null, capped } };
 }
 
-module.exports = { fetchJobs, parseSlug, toJob, locationOf };
+module.exports = { fetchJobs, parseSlug, toJob, locationOf, fetchTimeoutMs };
