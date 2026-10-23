@@ -27,6 +27,8 @@ const visma = require('./visma');
 const recman = require('./recman');
 const hrmanager = require('./hrmanager');
 const talentadore = require('./talentadore');
+const dayforce = require('./dayforce');
+const manatal = require('./manatal');
 
 const adapters = {
   greenhouse,
@@ -58,6 +60,8 @@ const adapters = {
   recman,
   hrmanager,
   talentadore,
+  dayforce,
+  manatal,
 };
 
 function getAdapter(atsName) {
