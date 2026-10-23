@@ -40,6 +40,7 @@
  *   node scripts/fetch-jobloo.js --concurrency=4 --pageSize=10000
  */
 const { query } = require('../src/db/connection');
+const sandboxGuard = require('../src/utils/sandbox-guard');
 const { classifyRemote, classifyRemoteWorldwide, classifyVisa, classifyRoleCategory, classifyExperienceLevel } = require('../src/utils/classify');
 
 const API = 'https://api.jobloo.co/api/jobs/search';
@@ -434,7 +435,7 @@ async function writeJobs(rows) {
 // ---------------------------------------------------------------- main
 
 const stats = {
-  fetched: 0, stale: 0, noBoard: 0, noDate: 0, dupInRun: 0, mapped: 0, written: 0,
+  fetched: 0, stale: 0, noBoard: 0, sandbox: 0, noDate: 0, dupInRun: 0, mapped: 0, written: 0,
   newCompanies: 0, pagesOk: 0, pagesFailed: 0, badRows: 0, withDescription: 0, withLevel: 0,
   bySource: {}, byAge: {}, unknownHosts: {}, failedShards: [],
   dbRetries: 0, pagesSkipped: 0,
@@ -468,6 +469,12 @@ async function processPage(category, offset) {
       } catch { stats.unknownHosts['(unparseable)'] = (stats.unknownHosts['(unparseable)'] || 0) + 1; }
       continue;
     }
+
+    // ATS demo/sandbox boards are not employers (FA-053). Judged before resolveCompany so a
+    // sandbox board never gets a company row created for it either.
+    if (sandboxGuard.judgePosting(
+      { ats: c.ats, slug: c.slug, careerUrl: c.careerUrl, url: job.applyUrl || job.hostedUrl },
+      { source: 'fetch-jobloo' }).reject) { stats.sandbox++; continue; }
 
     const companyId = await resolveCompany(c, job.company);
     if (companyId === null && !DRY_RUN) continue;
@@ -515,6 +522,7 @@ function report(final = false) {
     `fetched      ${stats.fetched}\n` +
     `  stale (>${MAX_AGE_MONTHS}mo) ${stats.stale} (${pct(stats.stale)})\n` +
     `  unknown board ${stats.noBoard} (${pct(stats.noBoard)})\n` +
+    `  sandbox board ${stats.sandbox} (${pct(stats.sandbox)})\n` +
     `  no date      ${stats.noDate}\n` +
     `  dup in run   ${stats.dupInRun}\n` +
     `KEPT         ${kept} (${pct(kept)})\n` +

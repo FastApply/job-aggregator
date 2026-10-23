@@ -6,6 +6,7 @@ const { normalizeEmploymentType, normalizeWorkplaceType } = require('../../utils
 const { classifyRoleCategory } = require('../../utils/classify');
 const { annualiseSalary } = require('../../utils/salary');
 const { parsePostedWindow } = require('../../utils/posted-window');
+const sandboxGuard = require('../../utils/sandbox-guard');
 
 // Upper bound on result counts — see countActive. Env-tunable.
 const COUNT_CAP = parseInt(process.env.SEARCH_COUNT_CAP, 10) || 10000;
@@ -509,9 +510,38 @@ const jobsRepo = {
     return rows[0] || null;
   },
 
-  async syncForCompany(companyId, ats, incomingJobs, { partial = false } = {}) {
+  async syncForCompany(companyId, ats, incomingJobs, { partial = false, company = null } = {}) {
     let added = 0;
     let updated = 0;
+
+    // ATS demo/sandbox boards are not employers (FA-053): real candidates' applications went into
+    // six of them. This is the one function every crawler, feed loader and import funnels through,
+    // so it is where a sandbox posting is stopped. The company is judged by its slug and
+    // career_url, each posting by its own URL (a third-party feed files jobs under its own
+    // namespace, so only the URL names the real board). What is dropped here is simply never
+    // stored; a board dropped in full leaves incomingJobs empty, which the absence counter below
+    // treats as "the adapter returned nothing" and so never retires the board's existing rows —
+    // that is the retire script's job, run by a person.
+    // `company` ({ ats_slug, career_url }) is optional: the crawlers already hold both from the query
+    // that claimed the company, so they hand them in and this costs no extra round trip (against a
+    // remote database that is one per company sync). Without it, one lookup by id. The lookup must
+    // not be able to fail a sync, so a failed read just means a URL-only check. SANDBOX_REJECT=off
+    // skips all of it.
+    let rejected = 0;
+    if (sandboxGuard.sandboxMode() !== 'off') {
+      let board = company;
+      if (!board) {
+        board = (await query('SELECT ats_slug, career_url FROM companies WHERE id = ?', [companyId])
+          .catch(() => ({ rows: [] }))).rows[0];
+      }
+      const guarded = sandboxGuard.filterPostings(
+        incomingJobs,
+        { ats, slug: board && board.ats_slug, careerUrl: board && board.career_url },
+        { source: 'syncForCompany' }
+      );
+      incomingJobs = guarded.kept;
+      rejected = guarded.rejected.length;
+    }
 
     // NOTE: posting age is a query-time concern (the API/UI filters by posted_at),
     // NOT an ingest-time one. We used to drop >30-day-old postings from the incoming
@@ -722,8 +752,8 @@ const jobsRepo = {
       }
     }
 
-    logger.info({ companyId, added, updated, removed, countable }, 'Job sync diff complete');
-    return { added, updated, removed };
+    logger.info({ companyId, added, updated, removed, rejected, countable }, 'Job sync diff complete');
+    return { added, updated, removed, rejected };
   },
 };
 

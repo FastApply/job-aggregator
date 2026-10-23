@@ -47,6 +47,7 @@ const { query, closeDb } = require('../db/connection');
 const logger = require('../logger');
 const { classifyJob } = require('../utils/classify');
 const { isSupportedAts, normalizeAts, SUPPORTED_ATS } = require('../utils/supported-ats');
+const sandboxGuard = require('../utils/sandbox-guard');
 
 const THRESHOLD = parseInt(process.env.DEMAND_MAX_RESULTS || '10', 10);
 const BATCH = parseInt(process.env.DEMAND_BATCH || '25', 10);
@@ -263,6 +264,11 @@ async function upsertNormalized(n) {
   // Only store jobs on ATS platforms we can crawl AND apply to — otherwise we re-fill the DB with
   // jobs users can't apply to (the exact cruft the one-time cleanup removed).
   if (!isSupportedAts(c.ats)) return 0;
+  // ATS demo/sandbox boards are not employers (FA-053). This path inserts the company and the job
+  // itself instead of going through syncForCompany, so it has to ask for itself. Both URLs are
+  // judged: the one stored on the job and the one an applicant is sent to.
+  if ([n.applyUrl, n.jobUrl].some((url) => sandboxGuard.judgePosting(
+    { ats: c.ats, slug: c.slug, careerUrl: c.careerUrl, url }, { source: 'demand-crawl' }).reject)) return 0;
   if (DRY) return 0;
   const cRes = await query(
     `INSERT INTO companies (company_name, domain, ats, ats_slug, career_url, status, origin, created_at, updated_at)
