@@ -14,6 +14,8 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const MAX_PAGES = 250; // 5,000 jobs
 const MIN_GAP_MS = Number(process.env.MANATAL_GAP_MS || 1000);
 const BLOCKED_WAIT_MS = 90 * 1000;
+// The shared queue makes a big board slow (5,000 jobs = 250 pages), so the crawler gets a longer limit.
+const fetchTimeoutMs = 30 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // One queue for the whole process: concurrent boards take turns, MIN_GAP_MS apart.
@@ -100,4 +102,4 @@ async function fetchJobs(rawSlug) {
   return { jobs, meta: { companyName: (company.name || '').trim() || null, logoUrl: company.logo || null, capped } };
 }
 
-module.exports = { fetchJobs, toJob, locationOf, slugOf };
+module.exports = { fetchJobs, toJob, locationOf, slugOf, fetchTimeoutMs };
