@@ -17,16 +17,19 @@
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0 Safari/537.36';
 const MAX_PAGES = 600;
 const DETAIL_MAX = Number(process.env.AVATURE_DETAIL_MAX || 150);
-const GAP_MS = Number(process.env.AVATURE_GAP_MS || 700);
-const BLOCKED_WAIT_MS = 20 * 1000;
-const fetchTimeoutMs = 60 * 60 * 1000;
+const GAP_MS = Number(process.env.AVATURE_GAP_MS || 1500);
+const BLOCKED_WAIT_MS = 60 * 1000;
+const fetchTimeoutMs = 2 * 60 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const nextAt = new Map();
-async function turn(host) {
+// One queue for the whole process, not one per site: every Avature site sits behind the same
+// firewall, which answered "406 Not Acceptable" to every site at once after four employers were
+// crawled side by side at ~5 requests a second (2026-10-23).
+let nextAt = 0;
+async function turn() {
   const now = Date.now();
-  const at = Math.max(now, nextAt.get(host) || 0);
-  nextAt.set(host, at + GAP_MS);
+  const at = Math.max(now, nextAt);
+  nextAt = at + GAP_MS;
   if (at > now) await sleep(at - now);
 }
 
@@ -37,9 +40,8 @@ function parseSlug(slug) {
 }
 
 async function getHtml(url) {
-  const host = new URL(url).host;
   for (let attempt = 1; ; attempt++) {
-    await turn(host);
+    await turn();
     let res;
     try {
       res = await fetch(url, { headers: { 'user-agent': UA, accept: 'text/html' }, signal: AbortSignal.timeout(45000) });
@@ -47,8 +49,8 @@ async function getHtml(url) {
       if (e.cause && e.cause.code === 'ENOTFOUND') throw new Error('Avature HTTP 404 (not found)');
       throw new Error(`Avature network error (retry): ${e.message}`);
     }
-    if ((res.status === 429 || res.status === 503) && attempt < 4) {
-      nextAt.set(host, Date.now() + BLOCKED_WAIT_MS * attempt);
+    if ((res.status === 406 || res.status === 429 || res.status === 503) && attempt < 4) {
+      nextAt = Math.max(nextAt, Date.now() + BLOCKED_WAIT_MS * attempt); // hold the whole queue
       continue;
     }
     if (res.status === 404) throw new Error('Avature HTTP 404 (not found)');
