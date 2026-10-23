@@ -20,16 +20,21 @@ const PAGE_SIZE = 10; // fixed by both APIs
 const MAX_PAGES = 3000; // 30,000 jobs
 const DETAIL_MAX = Number(process.env.EIGHTFOLD_DETAIL_MAX || 250);
 const GAP_MS = Number(process.env.EIGHTFOLD_GAP_MS || 1600);
-const BLOCKED_WAIT_MS = 15 * 1000;
+// Across all tenants too: six tenants crawled side by side (~4 requests a second in all) failed
+// 13 of 18 boards that each crawl fine alone (2026-10-23).
+const GLOBAL_GAP_MS = Number(process.env.EIGHTFOLD_GLOBAL_GAP_MS || 500);
+const BLOCKED_WAIT_MS = 20 * 1000;
 const fetchTimeoutMs = 2 * 60 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// One queue per tenant host: the limit is per host, so different employers can run side by side.
+// One queue per tenant host (its own limit) inside one process-wide queue (the limit across hosts).
 const nextAt = new Map();
+let globalNextAt = 0;
 async function turn(host) {
   const now = Date.now();
-  const at = Math.max(now, nextAt.get(host) || 0);
+  const at = Math.max(now, nextAt.get(host) || 0, globalNextAt);
   nextAt.set(host, at + GAP_MS);
+  globalNextAt = at + GLOBAL_GAP_MS;
   if (at > now) await sleep(at - now);
 }
 
@@ -50,7 +55,7 @@ async function get(host, path, { json = true } = {}) {
       if (e.cause && e.cause.code === 'ENOTFOUND') throw new Error('Eightfold HTTP 404 (not found)');
       throw new Error(`Eightfold network error (retry): ${e.message}`);
     }
-    if (res.status === 429 && attempt < 6) {
+    if ((res.status === 429 || res.status === 403 || res.status === 503) && attempt < 8) {
       nextAt.set(host, Math.max(nextAt.get(host) || 0, Date.now() + BLOCKED_WAIT_MS * attempt));
       continue;
     }
