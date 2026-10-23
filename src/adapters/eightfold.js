@@ -160,4 +160,42 @@ async function fetchJobs(slug) {
   return { jobs, meta: { companyName: tenant === 'app' ? null : page.name, logoUrl: null, capped } };
 }
 
-module.exports = { fetchJobs, parseSlug, toJob, salaryFrom, fetchTimeoutMs };
+// Employer domain per tenant, for description lookups that start from a bare job URL.
+const domainCache = new Map();
+
+/**
+ * Full text of one posting, for the description backfill. Starts from the job URL
+ * ("https://qualcomm.eightfold.ai/careers/job/446719636769", "?domain=" on the shared app host).
+ * Returns the HTML, or 'SKIP' when the posting is gone or carries no text. A passing fault throws,
+ * so the backfill does not fall back to fetching the page itself outside this adapter's queue.
+ */
+async function fetchDescription(url, rawData = {}) {
+  const m = String(url || '').match(/^https?:\/\/([a-z0-9-]+)\.eightfold\.ai\/careers\/job\/(\d+)/i);
+  if (!m) return 'SKIP';
+  const tenant = m[1].toLowerCase();
+  const id = m[2];
+  const host = `${tenant}.eightfold.ai`;
+  let domain = (rawData && rawData.domain) || (String(url).match(/[?&]domain=([a-z0-9.-]+)/i) || [])[1] || domainCache.get(tenant);
+  try {
+    if (!domain) {
+      domain = (await domainOf(host)).domain;
+      if (!domain) throw new Error('Eightfold no employer domain on the career page (retry)');
+      domainCache.set(tenant, domain);
+    }
+    const q = `domain=${encodeURIComponent(domain)}`;
+    let r = await get(host, `/api/pcsx/position_details?position_id=${id}&${q}`);
+    let text = r.status === 200 && r.body && r.body.data ? r.body.data.jobDescription : null;
+    if (text === null || text === undefined) {
+      r = await get(host, `/api/apply/v2/jobs/${id}?${q}`);
+      if (r.status === 404) return 'SKIP';
+      if (r.status !== 200 || !r.body) throw new Error(`Eightfold detail HTTP ${r.status} (retry)`);
+      text = r.body.job_description;
+    }
+    return String(text || '').replace(/<[^>]+>/g, '').trim().length >= 20 ? text : 'SKIP';
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) return 'SKIP';
+    throw e;
+  }
+}
+
+module.exports = { fetchJobs, parseSlug, toJob, salaryFrom, fetchDescription, fetchTimeoutMs };

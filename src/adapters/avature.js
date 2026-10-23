@@ -233,4 +233,20 @@ async function fetchJobs(slug) {
   return { jobs, meta: { companyName, logoUrl: null, capped } };
 }
 
-module.exports = { fetchJobs, parseSlug, parseList, parseDetail, toJob, fetchTimeoutMs };
+/**
+ * Full text of one posting, for the description backfill: its JobDetail page through the shared
+ * queue. Returns the HTML, or 'SKIP' when the page is gone or has no body. A passing fault throws,
+ * so the backfill does not fall back to fetching the page outside the queue.
+ */
+async function fetchDescription(url) {
+  if (!/\/JobDetail\//.test(String(url || ''))) return 'SKIP';
+  try {
+    const d = parseDetail((await getHtml(url)).html);
+    return d.description && text(d.description).length >= 20 ? d.description : 'SKIP';
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) return 'SKIP';
+    throw e;
+  }
+}
+
+module.exports = { fetchJobs, parseSlug, parseList, parseDetail, toJob, fetchDescription, fetchTimeoutMs };
