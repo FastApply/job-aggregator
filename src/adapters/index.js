@@ -33,6 +33,10 @@ const hrmanager = require('./hrmanager');
 const talentadore = require('./talentadore');
 const dayforce = require('./dayforce');
 const manatal = require('./manatal');
+const paycom = require('./paycom');
+const eightfold = require('./eightfold');
+const avature = require('./avature');
+const brassring = require('./brassring');
 
 const adapters = {
   greenhouse,
@@ -69,6 +73,10 @@ const adapters = {
   talentadore,
   dayforce,
   manatal,
+  paycom,
+  eightfold,
+  avature,
+  brassring,
 };
 
 function getAdapter(atsName) {
