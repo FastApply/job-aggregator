@@ -95,3 +95,10 @@ test('workable: the crawler waits out a block before timing the fetch, with the 
   assert.match(crawler, /if \(adapter\.waitUntilReady\) await adapter\.waitUntilReady\(\);\s*\n\s*const result = await withTimeout\(adapter\.fetchJobs\([^;]*adapter\.fetchTimeoutMs \|\| FETCH_TIMEOUT/);
   assert.ok(workable.fetchTimeoutMs > 60000);
 });
+
+test('workable: requests carry an IPv6-only dispatcher by default (the VPS IPv4 is blocked)', async () => {
+  let opts;
+  await fetchListings('acme', async (_url, o) => { opts = o; return page(codes(0, 1), undefined); });
+  assert.ok(opts.dispatcher, 'no dispatcher');
+  assert.equal(opts.method, 'POST');
+});

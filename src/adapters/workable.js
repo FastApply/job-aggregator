@@ -5,11 +5,22 @@ const MAX_PAGES = parseInt(process.env.WORKABLE_MAX_PAGES || '200'); // 10 jobs 
 // with Retry-After ~16 h on every apply.workable.com URL. The crawler had been sending ~2 requests a
 // second around the clock (a list + a widget call per company, re-crawled hourly, and an instant
 // retry after each 429). So: at least WORKABLE_MIN_GAP_MS between any two requests from this process
-// (~21k a day at 4 s — a full pass of ~10k boards in about half a day), and a block is waited out.
-const MIN_GAP_MS = parseInt(process.env.WORKABLE_MIN_GAP_MS || '4000');
+// (~8,600 a day at 10 s — about one pass of the ~10k boards a day), and a block is waited out.
+// Even at 4 s the IPv4 block kept renewing for 6 days, hence the slower default and IPv6 below.
+const MIN_GAP_MS = parseInt(process.env.WORKABLE_MIN_GAP_MS || '10000');
 const MAX_BLOCK_WAIT_MS = parseInt(process.env.WORKABLE_MAX_BLOCK_WAIT_MS || '3600000');
 const DEFAULT_BLOCK_WAIT_MS = parseInt(process.env.WORKABLE_BLOCK_WAIT_MS || '300000');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Which IP family Workable requests use. The VPS's IPv4 is blocked; the containers also have IPv6
+// (Coolify's network is dual-stack, NAT66), but Node prefers IPv4 when both resolve. 6 = force IPv6,
+// 4 = force IPv4, anything else = Node's default.
+const IP_FAMILY = parseInt(process.env.WORKABLE_IP_FAMILY || '6', 10);
+let dispatcher;
+try {
+  if (IP_FAMILY === 4 || IP_FAMILY === 6) dispatcher = new (require('undici').Agent)({ connect: { family: IP_FAMILY } });
+} catch { /* undici absent → Node's default */ }
+const withFamily = (opts) => (dispatcher ? { ...opts, dispatcher } : opts);
 
 let nextSlot = 0;
 let blockedUntil = 0;
@@ -49,12 +60,12 @@ async function fetchListings(clientname, fetchImpl = fetch) {
     if (page >= MAX_PAGES) { capped = true; break; }
     const res = await paced(() => fetchImpl(
       `https://apply.workable.com/api/v3/accounts/${encodeURIComponent(clientname)}/jobs`,
-      {
+      withFamily({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(token ? { token } : {}),
         signal: AbortSignal.timeout(15000),
-      }
+      })
     ));
     // A block: no request leaves this process until it lifts (every later call waits in paced()).
     // The error stays transient, so the company is retried and its jobs are untouched.
@@ -108,7 +119,7 @@ async function fetchCompanyMeta(clientname) {
   try {
     const res = await fetch(
       `https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(clientname)}`,
-      { signal: AbortSignal.timeout(5000) }
+      withFamily({ signal: AbortSignal.timeout(5000) })
     );
     if (res.ok) {
       const data = await res.json();
@@ -118,10 +129,10 @@ async function fetchCompanyMeta(clientname) {
 
   // Fallback: scrape the careers page for workablehr S3 logo
   try {
-    const res = await fetch(`https://apply.workable.com/${encodeURIComponent(clientname)}/`, {
+    const res = await fetch(`https://apply.workable.com/${encodeURIComponent(clientname)}/`, withFamily({
       headers: { 'User-Agent': 'Mozilla/5.0' },
       signal: AbortSignal.timeout(5000),
-    });
+    }));
     if (res.ok) {
       const html = await res.text();
       const match = html.match(/https:\/\/workablehr\.s3[^"'\s]*logo[^"'\s]*/);
