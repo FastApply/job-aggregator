@@ -525,7 +525,7 @@ const MAX_ROLES = 24;
 function hitKeys(hit) {
   const keys = [];
   if (hit.id != null) keys.push(`id:${hit.id}`);
-  if (hit.url) keys.push(`url:${String(hit.url).trim().replace(/\/+$/, '').toLowerCase()}`);
+  if (hit.url) keys.push(`url:${String(hit.url).trim().replace(/\/+$/, '')}`);
   if (!keys.length) keys.push(`raw:${JSON.stringify(hit)}`);
   return keys;
 }
