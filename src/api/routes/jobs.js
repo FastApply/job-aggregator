@@ -92,6 +92,9 @@ router.get('/api/jobs', async (req, res) => {
   if (req.query.q) filters.q = req.query.q;
   if (req.query.work_mode) filters.workMode = req.query.work_mode;
   if (req.query.employment_type) filters.employmentType = req.query.employment_type;
+  // Keep postings that state no work mode / employment type when filtering on one (FastApply's
+  // apply paths, whose match verdict reads the posting). See buildFilter.
+  if (req.query.include_unlabeled) filters.includeUnlabeled = req.query.include_unlabeled;
   if (req.query.location) filters.location = req.query.location;
   // Canonical param is `posted`; accept `posted_after` and `datePosted` as aliases because
   // different deployed frontends send different names (Browse-and-apply v2 on `main` sends
