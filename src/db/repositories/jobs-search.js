@@ -32,6 +32,32 @@ const toList = (v) => {
 /** Meilisearch filter strings need quotes escaped, since values are interpolated. */
 const q = (v) => `"${String(v).replace(/["\\]/g, '\\$&')}"`;
 
+// The spellings a place term is looked up under, beyond the term itself.
+//
+// The index writes location_tokens with punctuation turned into spaces (locationTokens in
+// location-countries.js: "St. Louis, MO" -> "st louis"; "Cluj-Napoca" -> "cluj napoca"), but the
+// query side only folded case and accents, so a term carrying a period or a hyphen asked for
+// "st. louis" / "cluj-napoca" — tokens no document can hold. Measured on the live board
+// 2026-10-27: q=Project Manager with location "St. Louis" 0 rows ("St Louis" 258, "Saint Louis"
+// 52), "Cluj-Napoca" 0 ("Cluj" 23); both are spellings First Apply automations carry, and both
+// automations found nothing every day. The abbreviated and spelled-out saint/fort/mount forms
+// are separate postings, so each is asked for too.
+const PLACE_ABBREVIATIONS = [['st', 'saint'], ['ste', 'sainte'], ['ft', 'fort'], ['mt', 'mount']];
+function placeSpellings(place) {
+  const out = new Set([place]);
+  const bare = norm(place).replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (bare) out.add(bare);
+  for (const form of [...out]) {
+    const [first, ...rest] = norm(form).split(' ');
+    if (!rest.length) continue;
+    for (const [short, long] of PLACE_ABBREVIATIONS) {
+      if (first === short) out.add([long, ...rest].join(' '));
+      else if (first === long) out.add([short, ...rest].join(' '));
+    }
+  }
+  return [...out];
+}
+
 // Place and country resolution for the location filter; see the long note in buildFilter.
 function clausesForPlace(term) {
   // location_tokens is the tokenised location written at index time. Verified 2026-08-07 at
@@ -53,7 +79,9 @@ function clausesForPlace(term) {
   // two-letter code on US-tagged postings, since "Chicago, IL" never says Illinois.
   const out = [];
   for (const place of placeVariants(term)) {
-    for (const t of queryTokens(place)) out.push(`location_tokens = ${q(t)}`);
+    for (const spelling of placeSpellings(place)) {
+      for (const t of queryTokens(spelling)) out.push(`location_tokens = ${q(t)}`);
+    }
     const code = usStateCode(place);
     if (code) out.push(`(location_tokens = ${q(code)} AND location_countries = ${q('us')})`);
   }
@@ -172,6 +200,9 @@ function remoteCountries(filters) {
   return fromPlace && codes.size ? [...codes] : null;
 }
 
+/** The caller asked for postings that do not state a work mode / employment type to be kept. */
+const wantsUnlabeled = (filters) => String(filters.includeUnlabeled || '').toLowerCase() === 'true';
+
 /**
  * Build a Meilisearch filter expression from the board's filter object.
  * Returns null if any filter cannot be expressed faithfully — the caller then uses Postgres.
@@ -197,12 +228,27 @@ function buildFilter(filters = {}) {
         or.push(`workplace_type = ${q('on_site')}`);
       }
     }
+    // include_unlabeled (sent by FastApply's apply paths): a posting that states no workplace
+    // type is not a mismatch, it is unknown — and it is most of what this filter removes. Measured
+    // live 2026-10-27 on 23 starved First Apply searches: of the 322 rows that dropping work_mode
+    // gave back, 198 carried no workplace type at all. FastApply's match verdict reads the posting
+    // and refuses a wrong mode, so its retrieval keeps the unknowns. Only for an office mode: an
+    // unlabeled row that is flagged remote is still a remote job.
+    if (or.length && wantsUnlabeled(filters) && modes.some((m) => m !== 'remote')) {
+      or.push('((workplace_type IS NULL OR NOT workplace_type EXISTS) AND NOT is_remote = true)');
+    }
     if (or.length) { modeClause = `(${or.join(' OR ')})`; modeOr = or; parts.push(modeClause); }
   }
 
   const types = toList(filters.employmentType).filter((t) => t.toLowerCase() !== 'any')
     .map(normalizeEmploymentType).filter(Boolean);
-  if (types.length) parts.push(`(${types.map((t) => `employment_type = ${q(t)}`).join(' OR ')})`);
+  if (types.length) {
+    const or = types.map((t) => `employment_type = ${q(t)}`);
+    // Same reasoning as the work mode above: 170 of the 212 rows that dropping employment_type
+    // gave back on the same searches had no employment type on the posting.
+    if (wantsUnlabeled(filters)) or.push('employment_type IS NULL OR NOT employment_type EXISTS');
+    parts.push(`(${or.join(' OR ')})`);
+  }
 
   const levels = toList(filters.experienceLevel);
   if (levels.length) parts.push(`(${levels.map((l) => `experience_level = ${q(l)}`).join(' OR ')})`);
@@ -451,6 +497,9 @@ function buildQuery(filters) {
  */
 const MULTI_ROLE_HIT_BUDGET = 4000;
 
+/** Deepest single-query window read from the top so the page can be deduped by URL. */
+const SINGLE_DEDUPE_DEPTH = 1000;
+
 /**
  * Roles beyond this are dropped from a single request.
  *
@@ -463,6 +512,28 @@ const MULTI_ROLE_HIT_BUDGET = 4000;
  * The cost of the higher ceiling is paid back below by not requesting facets per sub-query.
  */
 const MAX_ROLES = 24;
+
+/**
+ * The identities one hit answers to: its document id AND its posting URL.
+ *
+ * The index holds the same posting more than once under different ids (two crawl sources, or a
+ * re-keyed external id), and a page deduped by id alone served both. Measured on the live board
+ * 2026-10-27: 2,123 of 12,407 rows (17%) across 216 First Apply searches repeated a URL already
+ * on the same page; q=Communications Manager in Singapore returned 50 rows holding 36 postings.
+ * Every repeat is a page slot a different job could have had.
+ */
+function hitKeys(hit) {
+  const keys = [];
+  if (hit.id != null) keys.push(`id:${hit.id}`);
+  if (hit.url) keys.push(`url:${String(hit.url).trim().replace(/\/+$/, '').toLowerCase()}`);
+  if (!keys.length) keys.push(`raw:${JSON.stringify(hit)}`);
+  return keys;
+}
+
+/** Drop hits whose id or URL an earlier hit already had, keeping the first. */
+function dedupeHits(hits) {
+  return interleaveByRole([hits || []]);
+}
 
 /**
  * Interleave per-role result lists round-robin: role A's best hit, role B's best, role C's
@@ -486,9 +557,9 @@ function interleaveByRole(perRole) {
     for (const hits of perRole) {
       const hit = hits[rank];
       if (!hit) continue;
-      const key = hit.id != null ? String(hit.id) : (hit.url || JSON.stringify(hit));
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const keys = hitKeys(hit);
+      if (keys.some((k) => seen.has(k))) continue;
+      for (const k of keys) seen.add(k);
       out.push(hit);
     }
   }
@@ -677,13 +748,21 @@ async function search(filters = {}) {
     // enough results — so "senior technical writer" happily returned "Senior Technical Program
     // Manager", and with title/company_name/department/location all searchable it could satisfy
     // "senior" from the title and "technical" from the department. 'all' requires every term.
-    if (!res) res = await meili.search({ ...base, q, matchingStrategy: strict ? 'all' : 'last' });
+    // A single query is read from the top and deduped by URL in memory (see hitKeys), then the
+    // page is cut from the DEDUPED list — the same space the multi-role merge pages in, so page
+    // two starts where page one ended. 1.5x the window covers the repeats; past
+    // SINGLE_DEDUPE_DEPTH the page is read as before and only deduped within itself.
+    const singleWindow = offset + limit <= SINGLE_DEDUPE_DEPTH
+      ? { offset: 0, limit: Math.min(Math.ceil((offset + limit) * 1.5), SINGLE_DEDUPE_DEPTH) }
+      : {};
+    const fromSingle = !res;
+    if (!res) res = await meili.search({ ...base, ...singleWindow, q, matchingStrategy: strict ? 'all' : 'last' });
 
     // Requiring every term can legitimately return nothing on a long or unusual query, and an
     // empty board is worse than a loose one. Fall back to the permissive strategy only then, so
     // precision is the default and recall is the safety net rather than the other way round.
     if (strict && res && !(res.hits || []).length && q && q.trim().split(/\s+/).length > 1) {
-      const loose = await meili.search({ ...base, q, matchingStrategy: 'last' });
+      const loose = await meili.search({ ...base, ...singleWindow, q, matchingStrategy: 'last' });
       if (loose && (loose.hits || []).length) {
         // Log what it took to rescue the search, not just that we rescued it. `widenedTo` is the
         // number the user actually sees; a small number means the strict query was merely
@@ -712,7 +791,9 @@ async function search(filters = {}) {
         'Meili: zero results');
     }
 
-    const rows = (res.hits || []).map((h) => ({
+    let pageHits = dedupeHits(res.hits);
+    if (fromSingle && singleWindow.offset === 0) pageHits = pageHits.slice(offset, offset + limit);
+    const rows = pageHits.map((h) => ({
       id: h.id,
       external_id: h.external_id,
       title: h.title,
@@ -824,7 +905,8 @@ async function facets() {
 }
 
 module.exports = {
-  search, facets, buildFilter, buildQuery, splitRoles, interleaveByRole, mergeFacets,
+  search, facets, buildFilter, buildQuery, splitRoles, interleaveByRole, mergeFacets, dedupeHits,
+  placeSpellings,
   MAX_ROLES, COUNT_CAP,
   _withPlaceCountries: withPlaceCountries, // exported for tests
 };
