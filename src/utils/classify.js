@@ -21,7 +21,14 @@ const REMOTE_POSITIVE = [
   /\bremote\s*opportunity\b/i,
   /\blocation:\s*remote\b/i,
   /\bwork\s*remotely\b/i,
-  /\banywhere\b/i,
+  // "Anywhere" only where it describes WHERE THE WORK IS DONE. Bare /\banywhere\b/ marked
+  // onsite jobs remote from slogans and markup: DSV's "Start here. Go anywhere", CMA CGM's inline
+  // CSS "overflow-wrap: anywhere", a retail "accessories you won't find anywhere else". Remote-only
+  // FastApply users were applied to those onsite roles (pref-match audit, 2026-10-27: 7 of 126
+  // remote-flagged applied jobs were remote by that word alone).
+  /\bwork\s*(?:from\s*)?anywhere\b/i,
+  /\bremote\s*[\-–—,(]?\s*anywhere\b/i,
+  /\banywhere\s*in\s*the\s*world\b/i,
 ];
 
 const REMOTE_NEGATIVE = [
