@@ -521,16 +521,24 @@ const MAX_ROLES = 24;
  * 2026-10-27: 2,123 of 12,407 rows (17%) across 216 First Apply searches repeated a URL already
  * on the same page; q=Communications Manager in Singapore returned 50 rows holding 36 postings.
  * Every repeat is a page slot a different job could have had.
+ *
+ * The URL identity carries the title too. A URL alone is not one posting: Comeet employers file
+ * every opening under their careers page (31 jobs at cbd.ae/.../careers/apply, 19 at
+ * comm-it.com/commit-jobs), and 218,247 live jobs share a URL with a differently-titled job
+ * (2026-10-28). Keyed on URL alone, a "developer" search showed one of Abra-IT's developer roles
+ * and hid the rest. The same posting under two ids carries the same title, so it still dedupes.
  */
+const titleKey = (title) => String(title || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
 function hitKeys(hit) {
   const keys = [];
   if (hit.id != null) keys.push(`id:${hit.id}`);
-  if (hit.url) keys.push(`url:${String(hit.url).trim().replace(/\/+$/, '')}`);
+  if (hit.url) keys.push(`url:${String(hit.url).trim().replace(/\/+$/, '')}|${titleKey(hit.title)}`);
   if (!keys.length) keys.push(`raw:${JSON.stringify(hit)}`);
   return keys;
 }
 
-/** Drop hits whose id or URL an earlier hit already had, keeping the first. */
+/** Drop hits whose id or URL+title an earlier hit already had, keeping the first. */
 function dedupeHits(hits) {
   return interleaveByRole([hits || []]);
 }
@@ -684,6 +692,53 @@ async function searchMultiRole(roles, base, { limit, offset, filters }) {
 }
 
 /**
+ * One query, paged in the DEDUPED space (see hitKeys) — the same space the multi-role merge
+ * pages in, so page two starts where page one ended.
+ *
+ * The window is read from the top and grown until it holds `offset + limit` distinct postings or
+ * the index runs out: a fixed 1.5x served a short page whenever more than a third of the window
+ * repeated, and a client that stops on a short page stopped early. Past SINGLE_DEDUPE_DEPTH the
+ * rest of the page is read straight from the index, shifted by the repeats the top window held,
+ * so the first deep page continues exactly where the last deduped one ended instead of serving
+ * those repeats' worth of rows again. Repeats below the top window are dropped only within the
+ * page, so deep pages can drift by the repeats between them.
+ */
+async function searchSingle(params, { offset, limit }) {
+  const need = offset + limit;
+  let window = Math.min(Math.ceil(need * 1.5), SINGLE_DEDUPE_DEPTH);
+  for (;;) {
+    const res = await meili.search({ ...params, offset: 0, limit: window });
+    if (!res) return null;
+    const raw = res.hits || [];
+    const deduped = dedupeHits(raw);
+    if (deduped.length >= need || raw.length < window) return { ...res, hits: deduped.slice(offset, need) };
+    if (window < SINGLE_DEDUPE_DEPTH) {
+      window = Math.min(window * 2, SINGLE_DEDUPE_DEPTH);
+      continue;
+    }
+
+    const seen = new Set(deduped.flatMap(hitKeys));
+    const head = deduped.slice(offset, need);
+    const want = need - Math.max(offset, deduped.length);
+    const { facets: _facets, ...noFacets } = params;
+    const tail = await meili.search({
+      ...noFacets,
+      offset: SINGLE_DEDUPE_DEPTH + Math.max(0, offset - deduped.length),
+      limit: Math.ceil(want * 1.5),
+    });
+    const rest = [];
+    for (const hit of (tail && tail.hits) || []) {
+      if (rest.length >= want) break;
+      const keys = hitKeys(hit);
+      if (keys.some((k) => seen.has(k))) continue;
+      for (const k of keys) seen.add(k);
+      rest.push(hit);
+    }
+    return { ...res, hits: head.concat(rest) };
+  }
+}
+
+/**
  * Search. Returns { rows, total, totalIsCapped } shaped like the Postgres path, or null to fall
  * back. Rows are index documents mapped back to the column names formatJob expects.
  */
@@ -748,15 +803,9 @@ async function search(filters = {}) {
     // enough results — so "senior technical writer" happily returned "Senior Technical Program
     // Manager", and with title/company_name/department/location all searchable it could satisfy
     // "senior" from the title and "technical" from the department. 'all' requires every term.
-    // A single query is read from the top and deduped by URL in memory (see hitKeys), then the
-    // page is cut from the DEDUPED list — the same space the multi-role merge pages in, so page
-    // two starts where page one ended. 1.5x the window covers the repeats; past
-    // SINGLE_DEDUPE_DEPTH the page is read as before and only deduped within itself.
-    const singleWindow = offset + limit <= SINGLE_DEDUPE_DEPTH
-      ? { offset: 0, limit: Math.min(Math.ceil((offset + limit) * 1.5), SINGLE_DEDUPE_DEPTH) }
-      : {};
-    const fromSingle = !res;
-    if (!res) res = await meili.search({ ...base, ...singleWindow, q, matchingStrategy: strict ? 'all' : 'last' });
+    // A single query is paged in the deduped space; see searchSingle.
+    if (!res) res = await searchSingle({ ...base, q, matchingStrategy: strict ? 'all' : 'last' }, { offset, limit });
+
     // Reported to the caller (meta.widened). A client that asked for one role and is handed
     // jobs matching only some of its words needs to know: FastApply's starved-platform rescue
     // re-queries platforms the first page missed, and for a platform that truly has no
@@ -768,7 +817,7 @@ async function search(filters = {}) {
     // empty board is worse than a loose one. Fall back to the permissive strategy only then, so
     // precision is the default and recall is the safety net rather than the other way round.
     if (strict && res && !(res.hits || []).length && q && q.trim().split(/\s+/).length > 1) {
-      const loose = await meili.search({ ...base, ...singleWindow, q, matchingStrategy: 'last' });
+      const loose = await searchSingle({ ...base, q, matchingStrategy: 'last' }, { offset, limit });
       if (loose && (loose.hits || []).length) {
         // Log what it took to rescue the search, not just that we rescued it. `widenedTo` is the
         // number the user actually sees; a small number means the strict query was merely
@@ -798,9 +847,8 @@ async function search(filters = {}) {
         'Meili: zero results');
     }
 
-    let pageHits = dedupeHits(res.hits);
-    if (fromSingle && singleWindow.offset === 0) pageHits = pageHits.slice(offset, offset + limit);
-    const rows = pageHits.map((h) => ({
+    // Both paths already page in the deduped space; this only guards a page against itself.
+    const rows = dedupeHits(res.hits).map((h) => ({
       id: h.id,
       external_id: h.external_id,
       title: h.title,
@@ -916,4 +964,5 @@ module.exports = {
   placeSpellings,
   MAX_ROLES, COUNT_CAP,
   _withPlaceCountries: withPlaceCountries, // exported for tests
+  _searchSingle: searchSingle, // exported for tests
 };
