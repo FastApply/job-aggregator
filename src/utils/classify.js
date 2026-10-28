@@ -21,7 +21,21 @@ const REMOTE_POSITIVE = [
   /\bremote\s*opportunity\b/i,
   /\blocation:\s*remote\b/i,
   /\bwork\s*remotely\b/i,
-  /\banywhere\b/i,
+  // "Anywhere" only where it describes WHERE THE WORK IS DONE. Bare /\banywhere\b/ marked
+  // onsite jobs remote from slogans and markup: DSV's "Start here. Go anywhere", CMA CGM's inline
+  // CSS "overflow-wrap: anywhere", a retail "accessories you won't find anywhere else". Remote-only
+  // FastApply users were applied to those onsite roles (pref-match audit, 2026-10-27: 6 of 126
+  // remote-flagged applied jobs were remote by that word alone). On a 1,262-job sample of live
+  // remote-flagged postings mentioning "anywhere", 47% were onsite by that word alone.
+  /\bwork\s*(?:from\s*)?anywhere\b/i,
+  /\bremote\s*[\-–—,(]?\s*anywhere\b/i,
+  /\banywhere\s*in\s*the\s*world\b/i,
+  // Where the employee may LIVE: "telecommute from anywhere within the U.S.", "employees may live
+  // anywhere in Mexico" (both remote postings the narrower patterns above lost). Needs the
+  // in/within/across so "commutable from anywhere in NYC" and "ideas come from anywhere" stay out;
+  // "residing" is left out because "candidates residing anywhere in Maryland will be considered"
+  // is how onsite trade postings widen their applicant pool.
+  /\b(?:live|living|based|located|telecommute|telecommuting)\s+(?:from\s+)?anywhere\s+(?:in|within|across)\b/i,
 ];
 
 const REMOTE_NEGATIVE = [
