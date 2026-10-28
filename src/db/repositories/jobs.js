@@ -128,6 +128,9 @@ function buildFilters(filters = {}) {
     return out;
   };
 
+  // Keep postings that state no work mode / employment type (FastApply's apply paths send it).
+  const wantsUnlabeled = String(filters.includeUnlabeled || '').toLowerCase() === 'true';
+
   // Work mode: remote, hybrid, onsite — multi-value (OR semantics)
   // Each mode adds its own OR-block; the whole work_mode group is then OR'd
   // together so e.g. work_mode=remote,hybrid returns ANY remote OR hybrid job.
@@ -163,6 +166,11 @@ function buildFilters(filters = {}) {
           params.push(...WORKPLACE_VARIANTS.onsite);
         }
       }
+      // include_unlabeled: the same rule the Meilisearch path applies (jobs-search.js buildFilter),
+      // so a request that falls back here is not stricter than one the index served.
+      if (groups.length > 0 && wantsUnlabeled && modes.some((m) => m !== 'remote')) {
+        groups.push('(j.workplace_type IS NULL AND j.is_remote IS NOT TRUE)');
+      }
       if (groups.length > 0) clauses.push('(' + groups.join(' OR ') + ')');
     }
   }
@@ -183,7 +191,10 @@ function buildFilters(filters = {}) {
       // 1,401,111).
       const canon = [...new Set(types.map(normalizeEmploymentType).filter(Boolean))];
       if (canon.length) {
-        clauses.push(`j.employment_type IN (${canon.map(() => '?').join(', ')})`);
+        // include_unlabeled also keeps postings with no employment type. The index stores '' as
+        // null (meili.js toDocument), so '' counts as unlabeled here too.
+        const unlabeled = wantsUnlabeled ? " OR j.employment_type IS NULL OR j.employment_type = ''" : '';
+        clauses.push(`(j.employment_type IN (${canon.map(() => '?').join(', ')})${unlabeled})`);
         params.push(...canon);
       }
     }
@@ -729,3 +740,4 @@ const jobsRepo = {
 
 module.exports = jobsRepo;
 module.exports.COUNT_CAP = COUNT_CAP;
+module.exports._buildFilters = buildFilters; // exported for tests

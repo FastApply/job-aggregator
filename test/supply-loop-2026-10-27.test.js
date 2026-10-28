@@ -74,3 +74,75 @@ test('include_unlabeled keeps unlabeled non-remote postings for an office mode',
   // Remote alone is a flag the posting carries; nothing unlabeled to add.
   assert.doesNotMatch(filterFor({ workMode: 'remote', includeUnlabeled: 'true' }), /IS NULL/);
 });
+
+// Review follow-ups, 2026-10-28.
+
+test('one careers-page URL shared by different jobs keeps every job', () => {
+  // Comeet employers file every opening under one careers URL (31 jobs at one bank on the board).
+  const hits = [
+    { id: 1, url: 'https://www.abra-it.com/career', title: 'BI Developer' },
+    { id: 2, url: 'https://www.abra-it.com/career', title: 'Backend Node.js Developer' },
+    { id: 3, url: 'https://www.abra-it.com/career/', title: 'BI  developer' },
+  ];
+  assert.deepEqual(dedupeHits(hits).map((h) => h.id), [1, 2], 'same URL and same title is one posting');
+});
+
+const meili = require('../src/utils/meili');
+const { _searchSingle: searchSingle } = require('../src/db/repositories/jobs-search');
+
+/** A fake index serving `hits` in order, recording each window asked for. */
+function fakeIndex(t, hits) {
+  const calls = [];
+  t.mock.method(meili, 'search', async (params) => {
+    calls.push({ offset: params.offset, limit: params.limit });
+    return { hits: hits.slice(params.offset, params.offset + params.limit), estimatedTotalHits: hits.length };
+  });
+  return calls;
+}
+const job = (i, url = `u${i}`) => ({ id: i, url, title: 'Analyst' });
+
+test('a page heavy with repeats is filled, not served short', async (t) => {
+  // Every second hit repeats the one before it under a new id: 50% repeats, past the old 1.5x.
+  const hits = [];
+  for (let i = 0; i < 400; i += 1) hits.push(job(i, `u${Math.floor(i / 2)}`));
+  fakeIndex(t, hits);
+  const res = await searchSingle({ q: 'analyst' }, { offset: 0, limit: 50 });
+  assert.equal(res.hits.length, 50);
+  assert.equal(new Set(res.hits.map((h) => h.url)).size, 50);
+});
+
+test('the first page past the deduped window continues where the last one ended', async (t) => {
+  // 1,000 raw hits holding 900 postings (100 repeats), then 500 more distinct postings.
+  const hits = [];
+  for (let i = 0; i < 1000; i += 1) hits.push(job(i, i < 200 ? `u${Math.floor(i / 2)}` : `u${i}`));
+  for (let i = 1000; i < 1500; i += 1) hits.push(job(i));
+  fakeIndex(t, hits);
+  const last = await searchSingle({ q: 'x' }, { offset: 850, limit: 50 });
+  const next = await searchSingle({ q: 'x' }, { offset: 900, limit: 50 });
+  assert.equal(last.hits.at(-1).id, 999);
+  assert.deepEqual(next.hits.map((h) => h.id), Array.from({ length: 50 }, (_, k) => 1000 + k),
+    'no row of the previous page is served again');
+});
+
+test('a page straddling the deduped window takes the rest from below it', async (t) => {
+  const hits = [];
+  for (let i = 0; i < 1000; i += 1) hits.push(job(i, i < 200 ? `u${Math.floor(i / 2)}` : `u${i}`));
+  for (let i = 1000; i < 1500; i += 1) hits.push(job(i));
+  fakeIndex(t, hits);
+  const page = await searchSingle({ q: 'x' }, { offset: 880, limit: 50 });
+  assert.deepEqual(page.hits.map((h) => h.id), [
+    ...Array.from({ length: 20 }, (_, k) => 980 + k),
+    ...Array.from({ length: 30 }, (_, k) => 1000 + k),
+  ]);
+});
+
+test('the Postgres fallback honours include_unlabeled the same way', () => {
+  const { _buildFilters: buildPg } = require('../src/db/repositories/jobs');
+  const sql = (f) => buildPg(f).clauses.join(' AND ');
+  assert.doesNotMatch(sql({ employmentType: 'full-time' }), /employment_type IS NULL/);
+  assert.match(sql({ employmentType: 'full-time', includeUnlabeled: 'true' }),
+    /j\.employment_type IS NULL OR j\.employment_type = ''/);
+  assert.match(sql({ workMode: 'hybrid', includeUnlabeled: 'true' }),
+    /j\.workplace_type IS NULL AND j\.is_remote IS NOT TRUE/);
+  assert.doesNotMatch(sql({ workMode: 'remote', includeUnlabeled: 'true' }), /workplace_type IS NULL/);
+});
