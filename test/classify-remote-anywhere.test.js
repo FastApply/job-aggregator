@@ -30,3 +30,23 @@ test('"anywhere" that describes where the work happens still reads remote', () =
   // Location field saying anywhere is unchanged.
   assert.equal(classifyRemote('Writer', 'Anywhere', null, ''), true);
 });
+
+// Remote postings on the live board that say where the employee may live rather than "work
+// from anywhere" (2026-10-27 sample of remote-flagged postings mentioning "anywhere").
+test('where the employee may live or be based still reads remote', () => {
+  assert.equal(classifyRemote('Senior iOS Engineer - Mexico', 'Mexico City', null,
+    'Employees may live anywhere in Mexico, with availability to travel to the office.'), true);
+  assert.equal(classifyRemote('Senior Software Engineer', null, null,
+    'You will enjoy the flexibility to telecommute from anywhere within the U.S.'), true);
+  assert.equal(classifyRemote('AI Developer', 'Toronto, ON, Canada', null,
+    'This role can be based anywhere in Canada.'), true);
+});
+
+test('widening the applicant pool or the audience is not a remote job', () => {
+  assert.equal(classifyRemote('Ironworker', 'Frederick, MD', null,
+    'Preferred Areas: Frederick or Baltimore, MD (Candidates residing anywhere in Maryland will be considered)'), false);
+  assert.equal(classifyRemote('Brand Ambassador', 'New York, NY', null,
+    'This historic neighborhood is easily commutable from anywhere in NYC.'), false);
+  assert.equal(classifyRemote('Operations AI Developer', 'San Jose', null,
+    'At Adobe, we believe that great ideas can come from anywhere in the organization.'), false);
+});
