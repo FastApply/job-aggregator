@@ -72,7 +72,7 @@ async function claimBatch() {
           LIMIT ${BATCH}
           FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, ats, ats_slug, career_url, error_message`
+       RETURNING id, ats, ats_slug, career_url, error_message, company_name`
   );
   return rows;
 }
@@ -82,14 +82,36 @@ async function crawlCompany(co) {
   // careerUrl lets the workday adapter use the pod/site already on the row; others ignore it.
   // An adapter that paces its own requests (workable) can hold a company until a block lifts, and
   // can need longer than FETCH_TIMEOUT for a big paged board; neither should read as a timeout.
+  const opts = { careerUrl: co.career_url };
+  if (adapter.wantsStoredState) {
+    // UKG: the postings already holding text (so only new ones are read) and the name the row has.
+    const { rows } = await query(
+      'SELECT external_id FROM jobs WHERE company_id = ? AND removed_at IS NULL AND description IS NOT NULL',
+      [co.id]
+    );
+    opts.describedIds = new Set(rows.map((r) => r.external_id));
+    opts.companyName = co.company_name || null;
+  }
   if (adapter.waitUntilReady) await adapter.waitUntilReady();
-  const result = await withTimeout(adapter.fetchJobs(co.ats_slug, { careerUrl: co.career_url }), adapter.fetchTimeoutMs || FETCH_TIMEOUT, co.ats);
+  const result = await withTimeout(adapter.fetchJobs(co.ats_slug, opts), adapter.fetchTimeoutMs || FETCH_TIMEOUT, co.ats);
   // A company that answers again has its error cleared — any error, not only a discovery miss (whose
   // count this also resets). Old transient errors ("Workable HTTP 403" from May, "Breezy HTTP 403")
   // otherwise stayed on rows that had crawled fine for months: on 2026-10-17, 59 of 67 Breezy rows
   // flagged 403 had been refreshed in the past day.
   if (co.error_message) {
     await query('UPDATE companies SET error_message = NULL WHERE id = ?', [co.id]).catch(() => {});
+  }
+  // The employer, when the adapter read one and the row has none. Only ever fills a blank name: the
+  // BullMQ sync (src/queues/sync.queue.js) writes the adapter's name unconditionally, but this
+  // crawler wrote none at all, so UKG companies (whose crawl starts here) stayed nameless and every
+  // posting read "Unknown Company" to FastApply. The companies trigger re-indexes the company's
+  // jobs when the name changes; index_dirty_at is set here too for clarity.
+  const metaName = result && result.meta && typeof result.meta.companyName === 'string' ? result.meta.companyName.trim() : '';
+  if (metaName && !co.company_name) {
+    await query(
+      "UPDATE companies SET company_name = ?, index_dirty_at = NOW(), updated_at = NOW() WHERE id = ? AND (company_name IS NULL OR company_name = '')",
+      [metaName.slice(0, 255), co.id]
+    ).catch((e) => console.error(`company name write failed for ${co.id}: ${e.message}`));
   }
   const incoming = (result && (result.jobs || result)) || [];
   if (!incoming.length) return { jobs: 0, added: 0 };
