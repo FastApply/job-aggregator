@@ -112,8 +112,9 @@ test('ukg employer, modern layout: no logo, so the board name in the title scrip
   assert.match(PAGES.UNI1108UNAY, /new-nav-header/);
   assert.doesNotMatch(PAGES.UNI1108UNAY, /navbar-small-logo/);
   assert.equal(ukg.employerFromPage(PAGES.UNI1108UNAY, 'UNI1108UNAY'), 'UNITED ALLOY INC.');
-  // "Default Brand" logo, board "CONTINUUM Applied Technology ".
-  assert.equal(ukg.employerFromPage(PAGES.cam1010csii, 'cam1010csii'), 'CONTINUUM Applied Technology');
+  // "Default Brand" logo, board "CONTINUUM Applied Technology "; the text's "At CAMP Systems, we
+  // are..." starts like the tenant (cam1010csii: CAMP Systems International) and wins.
+  assert.equal(ukg.employerFromPage(PAGES.cam1010csii, 'cam1010csii'), 'CAMP Systems');
 });
 
 test('ukg employer: a generic board title and no logo fall back to the text, checked against the tenant alias', () => {
@@ -166,4 +167,10 @@ test('ukg employer: "<X> Brand" names the employer only when X starts like the t
   const logoPage = (alt) => `<img alt="${alt}" data-automation="navbar-small-logo" />`;
   assert.equal(ukg.employerFromPage(logoPage('Surgery Partners Brand'), 'SUR1004SRGY'), 'Surgery Partners');
   assert.equal(ukg.employerFromPage(logoPage('Maryland Brand'), 'CHI1001CHIM'), null);
+});
+
+test('ukg employer: a heading run is not a name; the sentence that introduces the employer is', () => {
+  // Live MEL1001MEL.
+  const d = '<h2>Melaleuca Award Winning Culture Flexibility Growth Benefits</h2><p>At Melaleuca, our mission has remained constant.</p><p>Melaleuca Award Winning Culture Flexibility Growth is hiring.</p>';
+  assert.equal(ukg.employerFromText(d, 'MEL1001MEL'), 'Melaleuca');
 });

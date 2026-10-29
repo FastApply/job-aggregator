@@ -166,14 +166,21 @@ function employerFromText(description, tenant) {
       // A run of capitalised words can carry a heading in front of the name ("... Out-of-State
       // Candidates Structure Medical is seeking"): take the tail that starts like the tenant.
       const words = m[0].split(/\s+/);
-      const at = words.findIndex((w, i) => /^[A-Z]/.test(w) && startsLikeTenant(words.slice(i).join(' '), tenant));
-      if (at < 0) continue;
-      const name = words.slice(at).join(' ').replace(/['’]s$/i, '').replace(/(?:\s+(?:&|of|and|the|de|for))+$/i, '').replace(/[.,'’-]+$/, '').trim();
-      if (name.length > 60) continue;
       const end = m.index + m[0].length;
-      const intro = INTRO_AFTER.test(sentence.slice(end, end + 40)) ||
-        (at === 0 && INTRO_BEFORE.test(sentence.slice(Math.max(0, m.index - 8), m.index)));
-      if (!intro) continue;
+      const before = sentence.slice(Math.max(0, m.index - 8), m.index);
+      let found = null;
+      for (let at = 0; at < words.length && !found; at++) {
+        if (!/^[A-Z]/.test(words[at]) || !startsLikeTenant(words.slice(at).join(' '), tenant)) continue;
+        const name = words.slice(at).join(' ').replace(/['’]s$/i, '').replace(/(?:\s+(?:&|of|and|the|de|for))+$/i, '').replace(/[.,'’-]+$/, '').trim();
+        // A run of headings ("Melaleuca Award Winning Culture Flexibility") is not a name; the text
+        // introduces the employer again ("... Benefits At Melaleuca, our mission").
+        if (name.length > 60 || name.split(/\s+/).length > 5) continue;
+        const intro = INTRO_AFTER.test(sentence.slice(end, end + 40)) ||
+          (at === 0 ? INTRO_BEFORE.test(before) : /^(?:at|join)$/i.test(words[at - 1]));
+        if (intro) found = name;
+      }
+      if (!found) continue;
+      const name = found;
       const ok = asEmployer(name, tenant);
       if (ok) return ok;
     }
