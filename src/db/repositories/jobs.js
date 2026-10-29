@@ -194,7 +194,12 @@ function buildFilters(filters = {}) {
         // include_unlabeled also keeps postings with no employment type. The index stores '' as
         // null (meili.js toDocument), so '' counts as unlabeled here too.
         const unlabeled = wantsUnlabeled ? " OR j.employment_type IS NULL OR j.employment_type = ''" : '';
-        clauses.push(`(j.employment_type IN (${canon.map(() => '?').join(', ')})${unlabeled})`);
+        // The index files a title that says "Intern" under Internship whatever the ATS stated
+        // (meili.js indexEmploymentType). Mirrored only for an internship request, so the title
+        // scan the comment above removed does not come back for every filtered search.
+        const internTitle = canon.includes('Internship')
+          ? " OR j.title ~* '\\m(intern|interns|internship|internships|stagiaire|practicante)\\M'" : '';
+        clauses.push(`(j.employment_type IN (${canon.map(() => '?').join(', ')})${unlabeled}${internTitle})`);
         params.push(...canon);
       }
     }
