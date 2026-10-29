@@ -37,6 +37,12 @@ const paycom = require('./paycom');
 const eightfold = require('./eightfold');
 const avature = require('./avature');
 const brassring = require('./brassring');
+const ukg = require('./ukg');
+const adp = require('./adp');
+const adp_workforcenow = require('./adp_workforcenow');
+const silkroad = require('./silkroad');
+const gem = require('./gem');
+const kula = require('./kula');
 
 const adapters = {
   greenhouse,
@@ -77,6 +83,12 @@ const adapters = {
   eightfold,
   avature,
   brassring,
+  ukg,
+  adp,
+  adp_workforcenow,
+  silkroad,
+  gem,
+  kula,
 };
 
 function getAdapter(atsName) {

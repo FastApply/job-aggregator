@@ -49,6 +49,11 @@ const ATS_CONFIG = {
   // overlaps waiting, it does not raise the request rate.
   eightfold:       { batchSize: 40, concurrency: 2 },
   avature:         { batchSize: 30, concurrency: 1 },
+  // The crawl stores only a teaser (UKG) or no text (Workforce Now, SilkRoad); one request a
+  // posting fills it. Each adapter paces its own requests.
+  ukg:              { batchSize: 40, concurrency: 2 },
+  adp_workforcenow: { batchSize: 40, concurrency: 2 },
+  silkroad:         { batchSize: 40, concurrency: 2 },
   // Simplify pages are ~44KB gzipped and this platform has 1.7M rows to fill, so it is the one
   // that runs longest. Concurrency stays modest deliberately: the work is a courtesy scrape of
   // someone else's site, and measured throughput was already ~40 pages/min at 4.
@@ -1294,6 +1299,12 @@ async function fetchDescription(job) {
       description = await require('../adapters/eightfold').fetchDescription(job.url, rawData); break;
     case 'avature':
       description = await require('../adapters/avature').fetchDescription(job.url); break;
+    case 'ukg':
+      description = await require('../adapters/ukg').fetchDescription(job.url); break;
+    case 'adp_workforcenow':
+      description = await require('../adapters/adp_workforcenow').fetchDescription(job.url, rawData); break;
+    case 'silkroad':
+      description = await require('../adapters/silkroad').fetchDescription(job.url); break;
   }
 
   // Last resort: the posting's own page.
