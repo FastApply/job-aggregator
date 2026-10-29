@@ -98,3 +98,72 @@ test('the crawler hands UKG its stored state and fills a blank company name', ()
   assert.match(crawler, /RETURNING id, ats, ats_slug, career_url, error_message, company_name/);
   assert.match(crawler, /SET company_name = \?, index_dirty_at = NOW\(\).*WHERE id = \? AND \(company_name IS NULL OR company_name = ''\)/);
 });
+
+// Real pages of both layouts, cut to the parts the reader looks at (read live 2026-10-29).
+const PAGES = require('./fixtures/ukg-pages.json');
+
+test('ukg employer, classic layout: the header logo names it', () => {
+  assert.equal(ukg.employerFromPage(PAGES.COR1031CORC, 'COR1031CORC'), 'Corovan Corporation');
+  assert.equal(ukg.employerFromPage(PAGES.MID1019MAOI, 'MID1019MAOI'), 'Mid-America Overseas, Inc.');
+});
+
+test('ukg employer, modern layout: no logo, so the board name in the title script names it', () => {
+  // Header drawn by script; the browser title reads "Welder (MIG) - 1st Shift | UNITED ALLOY INC.".
+  assert.match(PAGES.UNI1108UNAY, /new-nav-header/);
+  assert.doesNotMatch(PAGES.UNI1108UNAY, /navbar-small-logo/);
+  assert.equal(ukg.employerFromPage(PAGES.UNI1108UNAY, 'UNI1108UNAY'), 'UNITED ALLOY INC.');
+  // "Default Brand" logo, board "CONTINUUM Applied Technology ".
+  assert.equal(ukg.employerFromPage(PAGES.cam1010csii, 'cam1010csii'), 'CONTINUUM Applied Technology');
+});
+
+test('ukg employer: a generic board title and no logo fall back to the text, checked against the tenant alias', () => {
+  // Board "Opportunities" + "Default Brand"; text: "Hastings Insurance is seeking ..." (HAS1004...).
+  assert.equal(ukg.employerFromPage(PAGES.has1004hmic, 'has1004hmic'), 'Hastings Insurance');
+  // Board "Careers", no logo; text: "... Candidates Structure Medical is seeking CNC Machinists".
+  assert.equal(ukg.employerFromPage(PAGES.str1026strme, 'str1026strme'), 'Structure Medical');
+  // A capitalised name that does not start like the tenant is never taken from the text.
+  assert.equal(ukg.employerFromText('<p>Acme Corp is seeking a welder.</p>', 'STR1026STRME'), null);
+  assert.equal(ukg.employerFromText('<p>Structure Medical is seeking a welder.</p>', 'STR1026STRME'), 'Structure Medical');
+});
+
+test('ukg employer: a logo slogan loses to a name that starts like the tenant', () => {
+  // BUN1000BUNZL's logo alt is "Unlimited Potential"; its text names Bunzl.
+  assert.match(PAGES.BUN1000BUNZL, /alt="Unlimited Potential"/);
+  assert.equal(ukg.employerFromPage(PAGES.BUN1000BUNZL, 'BUN1000BUNZL'), 'Bunzl');
+});
+
+test('ukg employer: board titles lose their board words; a generic title is no name', () => {
+  const page = (b) => `<script>var params = ${JSON.stringify({ opportunityTitle: 'X', jobBoardName: b })};</script>`;
+  const cases = {
+    'Corovan Careers': 'Corovan', 'Careers at Acme': 'Acme', 'Acme Corp - External': 'Acme Corp',
+    'Fortegra Career Site': 'Fortegra', "Marvin's Building Materials Jobs": "Marvin's Building Materials",
+    'Cleveland Museum of Art Job Openings': 'Cleveland Museum of Art', 'Pinnacle Home': 'Pinnacle Home',
+    'Opportunities ': null, 'Employment Opportunities': null, 'Career Opportunities': null, Careers: null,
+    'Job Board': null, 'Join Our Team': null, 'External Careers': null, ZZZ1000ZZZ: null,
+  };
+  for (const [board, want] of Object.entries(cases)) assert.equal(ukg.employerFromPage(page(board), 'ZZZ1000ZZZ'), want, board);
+  // Logo text: "Farmers Logo 2022" is Farmers; an asset name or an entity-encoded name is read right.
+  const logoPage = (alt) => `<img alt="${alt}" data-automation="navbar-small-logo" />`;
+  assert.equal(ukg.employerFromPage(logoPage('Farmers Logo 2022'), 'FAR1008FNBC'), 'Farmers');
+  assert.equal(ukg.employerFromPage(logoPage('MW_enterprise'), 'MEL1004MHTC'), null);
+  assert.equal(ukg.employerFromPage(logoPage('Germain H&#xF4;tels'), 'GRO5006GRGEI'), 'Germain Hôtels');
+});
+
+test('ukg page read keeps a body the server never finishes sending', async () => {
+  const html = posting('Corovan Corporation', '<p>Text</p>') + '</html>';
+  global.fetch = async () => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream({
+      start(c) { c.enqueue(enc.encode(html.slice(0, 50))); c.enqueue(enc.encode(html.slice(50))); /* never closes */ },
+    });
+    return new Response(body, { status: 200 });
+  };
+  const url = 'https://recruiting.ultipro.com/COR1031CORC/JobBoard/793e0120-ef20-4600-b246-c0be5cd3cb03/OpportunityDetail?opportunityId=f1';
+  assert.deepEqual(await ukg.fetchPosting(url), { description: '<p>Text</p>', companyName: 'Corovan Corporation' });
+});
+
+test('ukg employer: "<X> Brand" names the employer only when X starts like the tenant', () => {
+  const logoPage = (alt) => `<img alt="${alt}" data-automation="navbar-small-logo" />`;
+  assert.equal(ukg.employerFromPage(logoPage('Surgery Partners Brand'), 'SUR1004SRGY'), 'Surgery Partners');
+  assert.equal(ukg.employerFromPage(logoPage('Maryland Brand'), 'CHI1001CHIM'), null);
+});

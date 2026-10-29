@@ -11,7 +11,9 @@
  * with no name and a job with no description, so a second run picks up only what is left.
  *
  *   1. companies: each live UKG company with no company_name gets the employer its newest
- *      posting's page names (the header logo's alt text; brand placeholders are not names).
+ *      posting's page names, read by the crawl's own reader (src/adapters/ukg.js employerFromPage:
+ *      header logo, board name, or the text's introduction of the employer checked against the
+ *      tenant alias; brand placeholders and generic board titles are never names).
  *      company_name and index_dirty_at are written together, so the Meili sync re-indexes that
  *      company's jobs with the name (the companies trigger would also mark it).
  *   2. descriptions (DESCRIPTIONS=1): live UKG jobs with no description, NEWEST first (the ones
