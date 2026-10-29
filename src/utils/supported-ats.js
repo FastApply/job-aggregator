@@ -17,12 +17,18 @@
  * Keep this list in sync with src/adapters/index.js when adapters are added/removed.
  */
 const SUPPORTED_ATS = new Set([
-  // 21 adapters (src/adapters/index.js)
+  // Adapters in src/adapters/index.js
   'greenhouse', 'ashby', 'lever', 'workable', 'recruitee', 'smartrecruiters', 'rippling',
   'personio', 'breezy', 'jazzhr', 'workday', 'zoho', 'icims', 'oracle', 'bamboohr', 'taleo',
-  'pinpoint', 'successfactors', 'comeet', 'paylocity', 'teamtailor',
+  'pinpoint', 'successfactors', 'comeet', 'paylocity', 'teamtailor', 'jobvite',
   // Oracle Fusion (kept)
   'oraclecloud',
+  // Nordic platforms (2026-10-04 .. 10-22), kept for the Nordic enterprise customer.
+  'varbi', 'reachmee', 'jobylon', 'visma', 'recman', 'hrmanager', 'talentadore',
+  // Enterprise platforms (2026-10-23), in CRAWL_LIST.
+  'dayforce', 'manatal', 'paycom', 'eightfold', 'avature', 'brassring',
+  // 2026-10-29 (2714990). adp = myjobs.adp.com; adp_workforcenow = workforcenow.adp.com.
+  'ukg', 'adp', 'adp_workforcenow', 'silkroad', 'gem', 'kula',
 ]);
 
 // Labels third-party feeds use for a platform we already have an adapter for. Deliberately
@@ -37,6 +43,8 @@ const ATS_ALIAS = {
   jworkable: 'workable',
   taleo_careersection: 'taleo',
   taleo_selectminds: 'taleo',
+  // UKG Pro Recruiting was UltiPro.
+  ultipro: 'ukg',
 };
 
 function normalizeAts(ats) {
