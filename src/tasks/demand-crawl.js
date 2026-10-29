@@ -47,6 +47,7 @@ const { query, closeDb } = require('../db/connection');
 const logger = require('../logger');
 const { classifyJob } = require('../utils/classify');
 const { isSupportedAts, normalizeAts, SUPPORTED_ATS } = require('../utils/supported-ats');
+const { findFeedTwins } = require('../utils/feed-twins');
 
 const THRESHOLD = parseInt(process.env.DEMAND_MAX_RESULTS || '10', 10);
 const BATCH = parseInt(process.env.DEMAND_BATCH || '25', 10);
@@ -263,6 +264,12 @@ async function upsertNormalized(n) {
   // Only store jobs on ATS platforms we can crawl AND apply to — otherwise we re-fill the DB with
   // jobs users can't apply to (the exact cruft the one-time cleanup removed).
   if (!isSupportedAts(c.ats)) return 0;
+  // The ATS crawl already has this posting: a second row would carry the feed's labels and
+  // location instead of the ATS's (utils/feed-twins.js) — and would undo retire-feed-twins.js,
+  // since the upsert below clears removed_at.
+  if ((await findFeedTwins([{ id: 0, ats: c.ats, external_id: String(n.externalId), url: n.jobUrl }], query)).size) {
+    return 0;
+  }
   if (DRY) return 0;
   const cRes = await query(
     `INSERT INTO companies (company_name, domain, ats, ats_slug, career_url, status, origin, created_at, updated_at)
