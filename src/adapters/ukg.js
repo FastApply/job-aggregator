@@ -22,9 +22,9 @@
 // could not see the employer at all. So the crawl now reads the posting page itself for the
 // newest postings that have no text yet (UKG_DETAIL_MAX a crawl; the caller passes the ids it
 // already holds text for, so each posting is read once), and the same page names the employer:
-// its header logo's alt text ("Mid-America Overseas, Inc."). The board page does not (its header
-// is drawn by script), so a board whose postings all have text already costs one page for the
-// name, and only while the company row has none.
+// its header logo, its board name or its own text (employerFromPage). The board page does not (its
+// header is drawn by script), so a board whose postings all have text already costs one page for
+// the name, and only while the company row has none.
 // FastApply's UKG apply adapter takes the posting URL .../OpportunityDetail?opportunityId={Id}.
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0 Safari/537.36';
 const PAGE = 50;
@@ -34,8 +34,7 @@ const MIN_GAP_MS = Number(process.env.UKG_GAP_MS || 400);
 // answer (measured 2026-10-29), so this stays small: once a board's backlog is read (the crawl
 // over several hours, or scripts/backfill-ukg-employers.js), only new postings cost a read.
 const DETAIL_MAX = Number(process.env.UKG_DETAIL_MAX || 5);
-// About half the boards' pages carry no header logo (the modern layout draws it by script), so a
-// board whose page named no employer is not asked again for a day.
+// A board whose page named no employer (6 of 194 read on 2026-10-29) is not asked again for a day.
 const NAME_MISS_TTL_MS = 24 * 60 * 60 * 1000;
 const nameMissAt = new Map();
 const HOST_RE = /^(?:recruiting2?\.ultipro\.(?:com|ca)|[a-z0-9-]+\.rec\.pro\.ukg\.net)$/i;
@@ -111,32 +110,179 @@ function toJob(o, ref) {
   };
 }
 
+const decodeEntities = (v) => String(v || '')
+  .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+  .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+  .replace(/&amp;/g, '&').replace(/&apos;|&rsquo;|&lsquo;/g, "'").replace(/&quot;|&ldquo;|&rdquo;/g, '"')
+  .replace(/&nbsp;/g, ' ').replace(/&ndash;/g, '–').replace(/&mdash;/g, '—');
+
+// A whole value that names no employer: a brand placeholder, a browser logo, or a board's generic
+// title once its "careers"/"jobs" words are gone.
+const NOT_A_NAME = /\b(?:chrome|firefox|internet explorer|edge|safari)\s+logo\b|\b(?:default|career\s+site)\s+brand\b|\?|^ready\b|\ball companies\b/i;
+const GENERIC = /^(?:unknown(?:\s+company)?|n\/?a|none|company|employer|our company|the company|external|internal|main|home|default|english|en|us|usa|all|global|candidate|candidates|applicant|search|portal|recruiting|recruitment|talent|hiring|team|the team|join us|join our team|work with us|current|open|now hiring)$/i;
+// Words a board title adds to the employer's name. Only ones that never end a real name on their
+// own: "Home" ("Pinnacle Home") or "US" ("Bayer US") would, so those go only in brackets.
+const BOARD_WORDS = '(?:logo(?:\\s+(?:19|20)\\d\\d)?|brand|careers?|career\\s+(?:site|portal|center|centre|page|opportunities)|jobs?|job\\s+(?:board|openings?|opportunities|postings?|search|site|page)|opportunities|openings|current\\s+openings|employment(?:\\s+opportunities)?|positions|postings|vacancies|external|internal|\\((?:\\s*(?:us|usa|en|external|internal|english)\\s*)\\))';
+// The board word must start a word of its own (or be the bracketed "(US)"): with the boundary
+// optional, "Hillebrand", "Firebrand", "Snagajob" and "Musical Compositions" lost their endings.
+const TRAILING_BOARD_WORDS = new RegExp(`(?:\\s*[-|:–,]*\\s*(?:\\b|(?=\\())${BOARD_WORDS}(?:\\b|(?<=\\)))?)+\\s*$`, 'i');
+const LEADING_BOARD_WORDS = /^\s*(?:(?:careers?|jobs?|opportunities|employment|work)\s+(?:at|with|for)|join(?:\s+(?:the|our))?(?:\s+team)?(?:\s+at)?|welcome\s+to)\s+/i;
+
+/** A candidate name from the page, tidied, or null when what is left names nobody. */
+function asEmployer(value, tenant) {
+  const raw = decodeEntities(value).replace(/\s+/g, ' ').trim();
+  if (!raw || NOT_A_NAME.test(raw) || /_|\.(?:png|jpe?g|gif|svg)\b/i.test(raw)) return null;
+  const name = raw.replace(LEADING_BOARD_WORDS, '').replace(TRAILING_BOARD_WORDS, '').replace(/[\s\-|:,]+$/, '').trim();
+  if (name.length < 2 || !/[a-z]/i.test(name)) return null;
+  if (tenant && name.replace(/\s+/g, '').toUpperCase() === String(tenant).toUpperCase()) return null;
+  if (GENERIC.test(name)) return null;
+  return name;
+}
+
 /**
- * The employer on a UKG page: its header logo's alt text ("Mid-America Overseas, Inc.", "Corovan
- * Corporation"). Null when the alt is not a name: a browser logo, the tenant alias, or a brand
- * placeholder several tenants share ("Default Brand", "Career Site Brand", "Ready to Join Our
- * Team?") — a placeholder would make unrelated employers one company. Same reading as FastApply's
- * match-time read (backend posting-text.util ukgEmployerName).
+ * The employer as the posting's own text names it, or null — the last resort, for a board with no
+ * header logo and only a generic title ("Opportunities", "Careers"). UKG tenant aliases are built
+ * from the employer's name: its first three letters, then a number (HAS1004HMIC: Hastings
+ * Insurance; CHE1027CFMC: Checkered Flag Automotive Group; STR1026STRME: Structure Medical). So a
+ * capitalised name in the text counts only when it starts with those three letters, AND it either
+ * sits where a posting introduces its employer ("Hastings Insurance is seeking", "At X,", "Join
+ * X", "...companies—Concord Hospitality Enterprises") or runs to two words or more.
+ */
+const NAME_WORD = "[A-Z][A-Za-z0-9&'’-]*";
+const CAPITALISED_NAME = new RegExp(`${NAME_WORD}(?:\\s+(?:${NAME_WORD}|&|of|and|the|de|for))*`, 'g');
+const INTRO_AFTER = /^\s*(?:,\s*)?(?:is|are|has\s+been|has|was)\s+(?:seeking|hiring|looking|searching|currently|now|a|an|the|one|proud|committed|dedicated|excited)\b|^\s*(?:offers|provides|believes|seeks|invites)\b/;
+const INTRO_BEFORE = /(?:\bat|\bjoin|—|–)\s*$/i;
+function tenantPrefix(tenant) {
+  return /^[A-Za-z]{3}/.test(String(tenant || '')) ? String(tenant).slice(0, 3).toUpperCase() : null;
+}
+function startsLikeTenant(name, tenant) {
+  const prefix = tenantPrefix(tenant);
+  return !!prefix && String(name).replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() === prefix;
+}
+// A capitalised run that opens with a section heading or a role is not an employer ("Position
+// Summary The Registered Nurse is a key member", "Company Overview ...", "Safety is a core value").
+const HEADING_FIRST = /^(?:position|job|summary|overview|about|description|responsibilities|duties|qualifications|requirements|benefits|company|department|location|schedule|shift|title|role|safety|project|registered|manager|customer|wellness|the)\b/i;
+/**
+ * Whether a name is tied to the tenant alias by more than its first three letters: the alias's
+ * trailing letters spell the name's start (BUN1000BUNZL: Bunzl; STR1026STRME: Structure Medical)
+ * or its initials (CHE1027CFMC: Checkered Flag Motor Company). Three shared letters alone are
+ * common to unrelated words ("The Company" on THE1000THEH), so only this lets the posting text
+ * override a logo or board name.
+ */
+function strongTenantTie(name, tenant) {
+  const tail = (/^[A-Za-z]{3}\d+([A-Za-z]{2,})$/.exec(String(tenant || '')) || [])[1];
+  if (!tail) return false;
+  const t = tail.toUpperCase();
+  const letters = String(name).replace(/[^A-Za-z]/g, '').toUpperCase();
+  const initials = String(name).split(/\s+/).map((w) => (w.match(/[A-Za-z]/) || [''])[0]).join('').toUpperCase();
+  return (letters.length >= 4 && (letters.startsWith(t) || t.startsWith(letters.slice(0, Math.min(5, letters.length)))))
+    || (initials.length >= 2 && (t.startsWith(initials) || initials.startsWith(t)));
+}
+function employerFromText(description, tenant) {
+  if (!tenantPrefix(tenant) || !description) return null;
+  const text = decodeEntities(String(description).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
+  // Sentence by sentence, so a name never runs into the next sentence ("... Enterprises. As").
+  for (const sentence of text.split(/(?<=[.!?;:])\s+/)) {
+    for (const m of sentence.matchAll(CAPITALISED_NAME)) {
+      // A run of capitalised words can carry a heading in front of the name ("... Out-of-State
+      // Candidates Structure Medical is seeking"): take the tail that starts like the tenant.
+      const words = m[0].split(/\s+/);
+      const end = m.index + m[0].length;
+      const before = sentence.slice(Math.max(0, m.index - 8), m.index);
+      let found = null;
+      for (let at = 0; at < words.length && !found; at++) {
+        if (!/^[A-Z]/.test(words[at]) || !startsLikeTenant(words.slice(at).join(' '), tenant)) continue;
+        const name = words.slice(at).join(' ').replace(/['’]s$/i, '').replace(/(?:\s+(?:&|of|and|the|de|for))+$/i, '').replace(/[.,'’-]+$/, '').trim();
+        // A run of headings ("Melaleuca Award Winning Culture Flexibility") is not a name; the text
+        // introduces the employer again ("... Benefits At Melaleuca, our mission").
+        if (name.length > 60 || name.split(/\s+/).length > 5 || HEADING_FIRST.test(name)) continue;
+        const intro = INTRO_AFTER.test(sentence.slice(end, end + 40)) ||
+          (at === 0 ? INTRO_BEFORE.test(before) : /^(?:at|join)$/i.test(words[at - 1]));
+        if (intro) found = name;
+      }
+      if (!found) continue;
+      const name = found;
+      const ok = asEmployer(name, tenant);
+      if (ok) return ok;
+    }
+  }
+  return null;
+}
+
+/**
+ * The employer on a UKG posting page, or null. Two layouts:
+ *  - classic: the header logo's alt text ("Mid-America Overseas, Inc.", "Corovan Corporation");
+ *  - modern: some boards' header is drawn by script and carries no
+ *    text, but the page's title script names the board: `var params = {"opportunityTitle":...,
+ *    "jobBoardName":"UNITED ALLOY INC."}` (the browser title reads "Welder (MIG) - 1st Shift |
+ *    UNITED ALLOY INC."). A board name is often the employer plus "Careers" ("Corovan Careers")
+ *    or only a generic title ("Opportunities"); the words are dropped and a generic title is
+ *    not a name.
+ * Placeholders shared by many tenants ("Default Brand", "Career Site Brand", "Ready to Join Our
+ * Team?"), browser logos and the tenant alias are never names: a placeholder would make unrelated
+ * employers one company. A name that starts like the tenant alias (its first three letters are the
+ * employer's: COR1031CORC, Corovan) goes first; a logo can carry a slogan ("Unlimited Potential").
+ * Then the posting text's own introduction of the employer, then any logo or board name.
  */
 function employerFromPage(html, tenant) {
-  const logo = (/<img\b[^>]*\bdata-automation="navbar-(?:small|large)-logo"[^>]*>/i.exec(String(html || '')) || [])[0];
+  const page = String(html || '');
+  const logo = (/<img\b[^>]*\bdata-automation="navbar-(?:small|large)-logo"[^>]*>/i.exec(page) || [])[0];
   const alt = logo ? (/\balt="([^"]*)"/i.exec(logo) || [])[1] : '';
-  const raw = String(alt || '')
-    .replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, "'").replace(/&quot;/g, '"').trim();
-  if (/\b(?:chrome|firefox|internet explorer|edge|safari)\s+logo\b|\b(?:default|career\s+site)\s+brand\b|\?|^ready\b|\ball companies\b/i.test(raw)) return null;
-  const name = raw
-    .replace(/^\s*careers?\s+at\s+/i, '')
-    .replace(/(?:\s*[-|:]?\s*\b(?:logo|brand|careers?|jobs?|job board|opportunities))+\s*$/i, '')
-    .trim();
-  if (name.length < 2 || (tenant && name.toUpperCase() === String(tenant).toUpperCase())) return null;
-  if (/^(?:unknown(?:\s+company)?|n\/?a|none|company|employer)$/i.test(name)) return null;
-  return name;
+  let fromLogo = asEmployer(alt, tenant);
+  // "<something> Brand" is how a tenant labels one of its brand themes: "Surgery Partners Brand"
+  // names the employer (SUR1004SRGY), "Maryland Brand" (CHI1001CHIM) names a region.
+  if (fromLogo && /\bbrand\s*$/i.test(decodeEntities(alt).trim()) && !startsLikeTenant(fromLogo, tenant)) fromLogo = null;
+  const board = /"jobBoardName"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(page);
+  let fromBoard = null;
+  if (board) {
+    try { fromBoard = asEmployer(JSON.parse(board[1]), tenant); } catch { fromBoard = null; }
+  }
+  // A name that starts like the tenant alias is the employer's; a logo can carry a slogan
+  // ("Unlimited Potential" on BUN1000BUNZL, where the text names Bunzl) or a brand of the group.
+  if (fromLogo && startsLikeTenant(fromLogo, tenant)) return fromLogo;
+  if (fromBoard && startsLikeTenant(fromBoard, tenant)) return fromBoard;
+  let fromText = null;
+  const marker = page.indexOf('new US.Opportunity.CandidateOpportunityDetail(');
+  if (marker >= 0) {
+    try {
+      const { value } = parseJsonPrefix(page.slice(marker + 'new US.Opportunity.CandidateOpportunityDetail('.length));
+      fromText = employerFromText(value && value.Description, tenant);
+    } catch { fromText = null; }
+  }
+  // The text overrides a logo or board name only when it is tied to the alias beyond its first
+  // three letters; otherwise a heading or role in the text could replace the real logo name.
+  if (fromText && (!(fromLogo || fromBoard) || strongTenantTie(fromText, tenant))) return fromText;
+  return fromLogo || fromBoard || fromText || null;
+}
+
+/**
+ * The page's text, as much of it as arrived. UKG sometimes sends the whole page and then holds the
+ * connection open until the request times out (measured 2026-10-29); `res.text()` then throws and
+ * the page is lost, although everything this adapter reads (the posting JSON, then the board name
+ * near the end) had already arrived. Stops at </html>.
+ */
+async function readPage(res) {
+  if (!res.body || typeof res.body.getReader !== 'function') return res.text();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let html = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      html += decoder.decode(value, { stream: true });
+      if (html.includes('</html>')) { reader.cancel().catch(() => {}); break; }
+    }
+  } catch {
+    // Timed out mid-body: keep what arrived.
+  }
+  return html;
 }
 
 /** One posting page: its HTML description (or null) and the employer it names (or null). */
 async function fetchPosting(url) {
   const res = await request(url, { headers: { 'user-agent': UA, accept: 'text/html' } });
-  const html = await res.text();
+  const html = await readPage(res);
   let tenant = null;
   try { tenant = new URL(url).pathname.split('/').filter(Boolean)[0] || null; } catch { /* keep null */ }
   let description = null;
@@ -240,6 +386,7 @@ const fetchTimeoutMs = 15 * 60 * 1000;
 const wantsStoredState = true;
 
 module.exports = {
-  fetchJobs, fetchDescription, fetchPosting, employerFromPage, toJob, locationOf, parseSlug, parseJsonPrefix,
+  strongTenantTie,
+  fetchJobs, fetchDescription, fetchPosting, employerFromPage, employerFromText, toJob, locationOf, parseSlug, parseJsonPrefix,
   fetchTimeoutMs, wantsStoredState,
 };
