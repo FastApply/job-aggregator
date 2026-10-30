@@ -99,3 +99,12 @@ test('brassring: a search job becomes a job, the place read from the site layout
   assert.deepEqual(brassring.parseSlug('25526/5032'), { partnerId: '25526', siteId: '5032' });
   assert.throws(() => brassring.parseSlug('25526'), /HTTP 404/);
 });
+
+test('brassring: the employer is read from the page title (2026-10-30)', () => {
+  assert.equal(brassring.employerFromTitle('<title id="title">Job Search | Infosys</title>'), 'Infosys');
+  assert.equal(brassring.employerFromTitle('<title id="title">Databricks and AI Architect | Infosys</title>'), 'Infosys');
+  assert.equal(brassring.employerFromTitle('<title id="title">Job Search | Home Depot</title>'), 'Home Depot');
+  assert.equal(brassring.employerFromTitle('<title>Error</title>'), null);
+  assert.equal(brassring.employerFromTitle('<title>Job Search</title>'), null);
+  assert.equal(brassring.employerFromTitle(''), null);
+});

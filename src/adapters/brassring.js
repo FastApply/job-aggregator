@@ -53,7 +53,24 @@ async function openSession(partnerId, siteId) {
   const cookie = (res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('set-cookie') || ''])
     .map((c) => c.split(';')[0]).filter(Boolean).join('; ');
   const rft = (html.match(/name="__RequestVerificationToken" type="hidden" value="([^"]+)"/) || [])[1] || '';
-  return { pre, cookie, rft };
+  return { pre, cookie, rft, companyName: employerFromTitle(html) };
+}
+
+/**
+ * The employer, from the page title: "Job Search | Infosys", "Job Search | Walgreens" (the client's
+ * name after the last bar). The payload has no employer field, so companies seeded by slug alone kept
+ * "25633/5439" as their name, and FastApply could not tell two postings at one employer apart: on
+ * 2026-10-29 a First Apply user was applied to two Infosys roles two minutes apart. Null for an
+ * error page or a title with no client part.
+ */
+function employerFromTitle(html) {
+  const title = (String(html || '').match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1];
+  if (!title) return null;
+  const parts = decode(title).split('|').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const name = parts[parts.length - 1];
+  if (!name || name.length > 80 || /^(?:error|job search|careers?|jobs?|search)$/i.test(name)) return null;
+  return name;
 }
 
 async function morePage(s, partnerId, siteId, pageNumber) {
@@ -130,8 +147,8 @@ async function fetchJobs(slug) {
     seen.add(job.external_id);
     jobs.push(job);
   }
-  // No reliable employer name in the payload: HeaderInfo holds menu links ("Find a Position").
-  return { jobs, meta: { companyName: null, logoUrl: null, capped } };
+  // The payload names no employer (HeaderInfo holds menu links, "Find a Position"); the title does.
+  return { jobs, meta: { companyName: s.companyName || null, logoUrl: null, capped } };
 }
 
-module.exports = { fetchJobs, parseSlug, toJob, layoutOf, fetchTimeoutMs };
+module.exports = { fetchJobs, parseSlug, toJob, layoutOf, employerFromTitle, fetchTimeoutMs };

@@ -101,15 +101,18 @@ async function crawlCompany(co) {
   if (co.error_message) {
     await query('UPDATE companies SET error_message = NULL WHERE id = ?', [co.id]).catch(() => {});
   }
-  // The employer, when the adapter read one and the row has none. Only ever fills a blank name: the
+  // The employer, when the adapter read one and the row has none. Only ever fills a blank (or slug) name: the
   // BullMQ sync (src/queues/sync.queue.js) writes the adapter's name unconditionally, but this
   // crawler wrote none at all, so UKG companies (whose crawl starts here) stayed nameless and every
   // posting read "Unknown Company" to FastApply. The companies trigger re-indexes the company's
   // jobs when the name changes; index_dirty_at is set here too for clarity.
   const metaName = result && result.meta && typeof result.meta.companyName === 'string' ? result.meta.companyName.trim() : '';
-  if (metaName && !co.company_name) {
+  // A name that is only the ATS slug is a placeholder too: BrassRing companies seeded by slug read
+  // "25633/5439" (Infosys) to FastApply, which could not see two postings there as one employer.
+  const slugName = !!co.company_name && co.company_name.trim() === String(co.ats_slug || '').trim();
+  if (metaName && (!co.company_name || slugName) && metaName !== co.company_name) {
     await query(
-      "UPDATE companies SET company_name = ?, index_dirty_at = NOW(), updated_at = NOW() WHERE id = ? AND (company_name IS NULL OR company_name = '')",
+      "UPDATE companies SET company_name = ?, index_dirty_at = NOW(), updated_at = NOW() WHERE id = ? AND (company_name IS NULL OR company_name = '' OR company_name = ats_slug)",
       [metaName.slice(0, 255), co.id]
     ).catch((e) => console.error(`company name write failed for ${co.id}: ${e.message}`));
   }
