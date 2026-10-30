@@ -193,6 +193,51 @@ const HYBRID_INTL = new RegExp([
 // one-word spelling only: the English "home office" is usually a headquarters (see above).
 const HOME_WORK_INTL = /\bhomeoffice\b|\bhome-office\b(?=.{0,30}\b(?:möglich|tage?|anteil|regelung|option)\b)|\bmobil(?:es|em)?\s+arbeiten\b|\btélétravail\b|\bteletravail\b|\bteletrabajo\b|\bthuiswerk(?:en)?\b|\blavoro da remoto\b/i;
 
+// Remote as the way THIS job is worked, read from a description. The bare word is no evidence:
+// rows the ATS gives no work model for are tagged here, and a remote-only candidate's search is
+// is_remote and nothing else, while the match verdict refuses only a mode the posting STATES, so
+// a wrong tag is an application. pref-match audit, 2026-10-30, all applied for remote-only users:
+// a Sentara hospital coordinator ("For positions that are available as remote work, Sentara
+// employs associates in..."), ManTech's "remote sensing techniques", desktop support with "remote
+// tech support", "remote job sites" (a field geologist), "building Remote Teams", "opportunity to
+// do remote work as needed".
+//
+// Singular on purpose: "a remote position" is this one, "for fully remote positions, compensation
+// will..." is an employer's boilerplate about others. A benefit line ("remote work options",
+// "Remote Work Opportunities") is not read as a work model either; such a row stays untagged.
+const REMOTE_STATEMENT = new RegExp([
+  // fully remote / 100% remote, unless what follows shows it is about other jobs.
+  '\\b(?:fully|100\\s?%|completely|entirely|permanently|exclusively|totally)[\\s-]+remote(?:ly)?\\b(?!\\s+(?:positions|roles|jobs|employees|workers|staff|status)\\b)',
+  '\\bremote\\s+(?:working\\s+)?(?:position|role|job|opportunity|assignment|contract|employee|worker|based)\\b(?!\\s+sites?\\b)',
+  '\\bremote[\\s-](?:first|only)\\b', '\\ball[\\s-]remote\\b', '#li-remote\\b', '\\bwork\\s+from\\s+anywhere\\b', '\\bwfh\\b',
+  // "work remotely", "can work fully remote", "working from home". Not "work with remote teams",
+  // a stipend for it, or a few days of it ("work remotely up to 2 days a week").
+  '\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))',
+  // "Location: Remote", "Location : India, Remote", "Work Arrangement: Fully remote", "Position Type: Full-Time, Remote".
+  '\\b(?:location|workplace|arrangement|set-?up|working\\s+conditions|work\\s+(?:mode|model|style|type|schedule)|position\\s+type|job\\s+type)\\s*(?:\\([^)]*\\))?\\s*[:;\\-–—]?\\s*(?:[\\w .,/&\\-]{0,30}[,:/|\\-–—]\\s*)?remote\\b(?!\\s+(?:sites?|locations?|areas?))',
+  // Workday's field: "Remote Type - Remote"; "Remote Type: On-site" reads as on-site below.
+  '\\bremote\\s+type\\s*[:\\-–—]?\\s*(?:fully\\s+)?remote\\b',
+  '\\bis\\s+an?\\s+remote\\b', '\\bremote\\s+worldwide\\b', '\\blocation\\s*:?\\s*virtual\\b', '\\bhourly,\\s*remote\\b',
+  '\\bremote\\s*[-–—]\\s*[a-z]+\\s+based\\b',
+  // German postings borrow the word: "Remote-Arbeit innerhalb Deutschlands".
+  '\\bremote[\\s-]arbeit(?:en)?\\b',
+  // "REMOTE - US Residents Only", "Remote (US)", "Sales Manager – Remote".
+  '\\bremote\\s*[(\\-–—:|]\\s*(?:us|u\\.s\\.|usa|united\\s+states|uk|united\\s+kingdom|canada|india|europe|emea|apac|latam|latin\\s+america|north\\s+america|anywhere|global|worldwide|nationwide)\\b',
+  '\\bremote\\s*\\(\\s*[a-z]', '\\(\\s*remote\\s*\\)', '[–—]\\s*remote\\b(?!\\s+(?:sensing|monitoring|access|support))',
+  '\\bremote\\s+work\\s*:', '\\bcomfort\\s+of\\s+your\\s+(?:own\\s+)?home\\b',
+  // "This role will be remote", "may be filled remotely".
+  '\\b(?:position|role|job)\\s+(?:is|can\\s+be|will\\s+be|may\\s+be|could\\s+be|would\\s+be)\\s+(?:\\w+\\s+){0,2}?(?:remote|(?:performed|done|filled|based|worked)\\s+remotely)\\b',
+].join('|'), 'i');
+
+function statesRemote(title, description) {
+  const text = String(description || '').replace(/\s+/g, ' ');
+  if (!text || NOT_REMOTE_EN.test(text)) return false;
+  if (REMOTE_STATEMENT.test(text)) return true;
+  // "Ajaia is hiring a remote Product Manager": the word against the job's own title.
+  const name = String(title || '').trim().toLowerCase();
+  return name.length > 3 && text.toLowerCase().includes(`remote ${name}`);
+}
+
 function extractWorkplaceType(title, location, description) {
   // Checked BEFORE the combined blob below, which is the bug this guards.
   //
@@ -214,7 +259,8 @@ function extractWorkplaceType(title, location, description) {
   // Unless hybrid is named too: "hasta 20 días al año de trabajo 100% remoto" is a perk on a hybrid
   // job, and "ob voll remote oder in einem unserer Büros" offers a choice.
   if (FULL_REMOTE_INTL.test(fields) && !HYBRID_INTL.test(fields)) return 'remote';
-  if (/\bremote\b|\bwork from home\b|\bwfh\b|\bfully remote\b|\b100% remote\b/.test(fields)) {
+  // Remote only when the job is said to be worked that way, not on the word: see statesRemote.
+  if (REMOTE_IN_HEAD.test(`${title || ''} ${location || ''}`) || statesRemote(title, description)) {
     if (HYBRID_INTL.test(fields)) return 'hybrid';
     return 'remote';
   }
@@ -239,7 +285,7 @@ const STRONG_REMOTE_EN = new RegExp([
 // ...and the ways postings say the opposite with the same words: "this is not a remote position"
 // (Kimley-Horn, on every posting), "fully remote work is not available", "does not apply to fully
 // remote roles", "exceptions will be granted for those in fully remote status".
-const NOT_REMOTE_EN = /\bnot\s+(?:an?\s+)?(?:\w+\s+)?remote\b|\bnon[\s-]remote\b|\bno\s+remote\b|\bremote(?:\s+work)?\s+is\s+not\b|\bdoes\s+not\s+apply\s+to\s+(?:fully\s+)?remote\b|\bexceptions?\b.{0,80}\bremote\b/i;
+const NOT_REMOTE_EN = /\bnot\s+(?:an?\s+)?(?:\w+\s+)?remote\b|\bnot\s+suitable\s+for\s+(?:fully\s+)?remote\b|\bwork\s+remotely\s*:?\s*no\b|\botherwise\s+indicated\s+as\s+(?:fully\s+)?remote\b|\bto\s+fully\s+remote\b|\boccasional\s+(?:wfh|remote|work\s+from\s+home)\b|\bnon[\s-]remote\b|\bno\s+remote\b|\bremote(?:\s+work)?\s+is\s+not\b|\bdoes\s+not\s+apply\s+to\s+(?:fully\s+)?remote\b|\bexceptions?\b.{0,80}\bremote\b/i;
 // Remote as part of a thing, not a work model: "Senior Program Manager - Remote Sensing".
 const REMOTE_IN_HEAD = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))|\btelecommute\b|\bwork from home\b/i;
 
@@ -323,4 +369,4 @@ function normalizeWorkplaceType(raw) {
   return null;
 }
 
-module.exports = { extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES, normalizeWorkplaceType, WORKPLACE_TYPES };
+module.exports = { extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES, normalizeWorkplaceType, WORKPLACE_TYPES };

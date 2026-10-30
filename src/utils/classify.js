@@ -11,16 +11,18 @@
 // ── Remote Detection ──────────────────────────────────────────────
 
 const REMOTE_POSITIVE = [
-  /\bfully\s*remote\b/i,
-  /\b100%\s*remote\b/i,
-  /\bwork\s*from\s*home\b/i,
+  // Singular, like statesRemote in extract.js: "For fully remote positions, compensation will..."
+  // is boilerplate about other jobs, and "remote job sites" are where a field geologist goes.
+  /\bfully\s*remote\b(?!\s+(?:positions|roles|jobs|employees|workers))/i,
+  /\b100%\s*remote\b(?!\s+(?:positions|roles|jobs|employees|workers))/i,
+  /\bwork\s*from\s*home\b(?!\s+(?:stipend|reimbursement|allowance|equipment|budget|days?)\b)/i,
   /\bremote[\s-]*first\b/i,
   /\bremote\s*position\b/i,
   /\bremote\s*role\b/i,
-  /\bremote\s*job\b/i,
+  /\bremote\s*job\b(?!\s+sites?\b)/i,
   /\bremote\s*opportunity\b/i,
   /\blocation:\s*remote\b/i,
-  /\bwork\s*remotely\b/i,
+  /\bwork\s*remotely\b(?!\s+(?:\d|up\s+to|one|two|three|four|once|twice|on\s+occasion|occasionally|as\s+needed|part[\s-]|some|\w+\s+days?\b))/i,
   // "Anywhere" only where it describes WHERE THE WORK IS DONE. Bare /\banywhere\b/ marked
   // onsite jobs remote from slogans and markup: DSV's "Start here. Go anywhere", CMA CGM's inline
   // CSS "overflow-wrap: anywhere", a retail "accessories you won't find anywhere else". Remote-only
@@ -40,6 +42,7 @@ const REMOTE_POSITIVE = [
 
 const REMOTE_NEGATIVE = [
   /\bnot\s*remote\b/i,
+  /\bnot\s+(?:an?\s+)?(?:\w+\s+)?remote\b/i,
   /\bnon[\s-]*remote\b/i,
   /\bin[\s-]*office\b/i,
   /\bon[\s-]*site\s*only\b/i,
@@ -62,7 +65,8 @@ function classifyRemote(title, location, workplaceType, description) {
   }
 
   // Title or location says "Remote", "Worldwide", "Anywhere"
-  if (/\bremote\b/i.test(title || '')) return true;
+  // ...as a work model: "Remote Operations Center Specialist" and "Remote Sensing Analyst" are not.
+  if (/\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))/i.test(title || '')) return true;
   if (/\bremote\b/i.test(location || '') && !/hybrid/i.test(location || '')) return true;
   if (/\b(?:worldwide|anywhere|global)\b/i.test(location || '')) return true;
 
