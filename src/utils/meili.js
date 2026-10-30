@@ -132,6 +132,29 @@ async function stats() {
 }
 
 /**
+ * What a posting whose TITLE names it an internship is: an internship, whatever hours the ATS
+ * states. Workday's only type field is the time type, so its "ASIC Intern" and "Firmware
+ * Engineering Intern" postings arrive as "Full time", and employment_type=internship never
+ * returned them. Measured live 2026-10-30 (supply loop) on a starved First Apply search for
+ * firmware / embedded / hardware engineering interns in the US: of 176 intern-titled rows on
+ * its first four pages, 74 were labeled Full-time, Part-time, Contract or Temporary and the
+ * internship filter dropped them all. The same label put them in front of full-time searches,
+ * where FastApply's verdict then refused them as internships (enforceInternshipType).
+ *
+ * Title only: the experience_level classifier also reads the description, and a description
+ * that mentions "our intern program" does not make the job an internship. "Co-op" is left out
+ * on purpose, it is also a retailer ("Co-op Store Manager"), and so is the staff that runs an
+ * intern program ("Internship Program Coordinator", "Intern Recruiter").
+ */
+const INTERNSHIP_TITLE =
+  /\bintern(?:ship)?s?\b(?!\s+(?:program(?:me)?s?|coordinator|recruit\w*|manager|lead|specialist|director|advisor|liaison)\b)|\bstagiaire\b|\bpracticante\b/i;
+
+function indexEmploymentType(row) {
+  if (INTERNSHIP_TITLE.test(row.title || '')) return 'Internship';
+  return normalizeEmploymentType(row.employment_type) || row.employment_type || null;
+}
+
+/**
  * Map a jobs row to an index document.
  *
  * Dates become epoch seconds because Meilisearch can only filter and sort numerically —
@@ -166,7 +189,9 @@ function toDocument(row) {
     // employment_type=full-time silently dropped 21% of full-time jobs (57% of temporary). One
     // employer's 175 full-time jobs returned 0. Anything the normaliser cannot place keeps its
     // raw text, so the value shown to users loses nothing.
-    employment_type: normalizeEmploymentType(row.employment_type) || row.employment_type || null,
+    //
+    // A title that says the job is an internship wins over the stated type (indexEmploymentType).
+    employment_type: indexEmploymentType(row),
     experience_level: row.experience_level || null,
     visa_sponsorship: row.visa_sponsorship || null,
     role_category: row.role_category || null,
@@ -199,4 +224,5 @@ function toDocument(row) {
 module.exports = {
   enabled, INDEX, HOST,
   health, ensureIndex, addDocuments, deleteDocuments, search, multiSearch, stats, toDocument, call,
+  indexEmploymentType, INTERNSHIP_TITLE,
 };
