@@ -281,3 +281,16 @@ setTimeout(runMeiliSync, 90 * 1000);
 ensureDemandColumns().catch((e) => logger.warn({ err: e.message }, 'demand ensureColumns')).finally(() => setTimeout(runDemandCrawl, 6 * 60 * 1000));
 // Late enough that a boot storm after an OOM restart does not run it repeatedly.
 setTimeout(runHealthCheck, 12 * 60 * 1000);
+
+// Boards named by newly imported job URLs (UKG, ADP, SilkRoad, Gem, Kula ...) that the crawler
+// does not have yet: each is read once by its own adapter and seeded only if it has jobs. See
+// src/tasks/seed-boards.js. The two-day window overlaps the daily cycle, and a re-run after a
+// deploy is harmless (known boards are skipped before any request). BOARD_SEED=0 turns it off.
+async function runBoardSeeding() {
+  if (shuttingDown) return;
+  try {
+    await require('../src/tasks/seed-boards').seedBoardsFromRecentJobs({ days: parseInt(process.env.BOARD_SEED_DAYS || '2', 10) });
+  } catch (e) { logger.error({ err: e.message }, 'board seeding error'); }
+  setTimeout(runBoardSeeding, 24 * 60 * 60 * 1000);
+}
+if (process.env.BOARD_SEED !== '0') setTimeout(runBoardSeeding, 20 * 60 * 1000);
