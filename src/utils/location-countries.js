@@ -217,6 +217,8 @@ const ALIASES = [
   // South Wales, Australia" was tagged United Kingdom (via "wales") and 22 of 400 rows a
   // location=United Kingdom search returned on 2026-10-29 were Australian; "Port of Spain,
   // Trinidad and Tobago" answered location=Spain.
+  // Index-only: these name a state and a city, never a country, so resolveCountry() ignores them
+  // (PLACE_NOT_COUNTRY below). A location=New South Wales search must not widen to all of Australia.
   ['au', ['new south wales']],
   ['tt', ['port of spain']],
   // Hyphens are scrubbed to spaces before the scan, so the table's "Guinea-Bissau" never matched
@@ -334,10 +336,17 @@ const US_TERRITORIES = new Set(['pr', 'vi', 'gu']);
  * a single bare term has no such context, so — same as the header note's own rule for
  * ambiguous-and-unrepeated cases — it emits nothing rather than guess.
  */
+// Places the n-gram scan reads as their country (so "Sydney, New South Wales" is not tagged Wales and
+// "Port of Spain, Trinidad and Tobago" is not tagged Spain) but that a search names as a place: a
+// country search for them would return every job in Australia or Trinidad and Tobago.
+const PLACE_NOT_COUNTRY = new Set(['new south wales', 'port of spain']);
+
 function resolveCountry(term) {
   const n = norm(term);
   if (n.length === 2 && US_STATES.has(n)) return null;
-  const code = LOOKUP.get(n) || LOOKUP.get(n.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim());
+  const scrubbed = n.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (PLACE_NOT_COUNTRY.has(n) || PLACE_NOT_COUNTRY.has(scrubbed)) return null;
+  const code = LOOKUP.get(n) || LOOKUP.get(scrubbed);
   return code ? { code, name: NAME.get(code) } : null;
 }
 

@@ -50,3 +50,14 @@ test('Port of Spain is Trinidad and Tobago, not Spain', () => {
 test('two places in one string keep both countries', () => {
   assert.deepStrictEqual(tags('United Kingdom - Remote, Sydney, New South Wales'), ['au', 'gb']);
 });
+
+test('a state or city named for its country at index time is still a place in a search', () => {
+  const { resolveCountry, countriesFromLocation } = require('../src/utils/location-countries');
+  assert.deepEqual(countriesFromLocation('Sydney, New South Wales, Australia'), ['au']);
+  assert.deepEqual(countriesFromLocation('Port of Spain, Trinidad and Tobago'), ['tt']);
+  assert.equal(resolveCountry('New South Wales'), null);
+  assert.equal(resolveCountry('new south wales'), null);
+  assert.equal(resolveCountry('Port of Spain'), null);
+  assert.equal(resolveCountry('Australia').code, 'au');
+  assert.equal(resolveCountry('Trinidad and Tobago').code, 'tt');
+});
