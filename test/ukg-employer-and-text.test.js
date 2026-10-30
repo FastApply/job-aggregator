@@ -90,11 +90,11 @@ test('ukg description backfill still reads the posting text', async () => {
   assert.deepEqual(await ukg.fetchPosting(url), { description: '<p>Text</p>', companyName: 'X Corp' });
 });
 
-test('the crawler hands UKG its stored state and fills a blank company name', () => {
+test('the crawler hands UKG its stored state and fills a blank (or slug-only) company name', () => {
   const crawler = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'crawl-companies-local.js'), 'utf8');
   assert.equal(ukg.wantsStoredState, true);
   assert.match(crawler, /adapter\.wantsStoredState/);
   assert.match(crawler, /description IS NOT NULL/);
   assert.match(crawler, /RETURNING id, ats, ats_slug, career_url, error_message, company_name/);
-  assert.match(crawler, /SET company_name = \?, index_dirty_at = NOW\(\).*WHERE id = \? AND \(company_name IS NULL OR company_name = ''\)/);
+  assert.match(crawler, /SET company_name = \?, index_dirty_at = NOW\(\).*WHERE id = \? AND \(company_name IS NULL OR company_name = '' OR company_name = ats_slug\)/);
 });
