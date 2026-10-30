@@ -16,6 +16,7 @@
  */
 const { query } = require('../db/connection');
 const meili = require('../utils/meili');
+const { findFeedTwins } = require('../utils/feed-twins');
 const logger = require('../logger');
 
 // Ceiling on how fast this loop can push documents at Meilisearch.
@@ -68,7 +69,7 @@ async function syncMeili() {
     return { skipped: h.reason };
   }
 
-  let indexed = 0, removed = 0, batches = 0;
+  let indexed = 0, removed = 0, batches = 0, feedTwins = 0;
 
   for (; batches < MAX_BATCHES; batches++) {
     const { rows } = await query(
@@ -88,8 +89,12 @@ async function syncMeili() {
     );
     if (!rows.length) break;
 
-    const live = rows.filter((r) => !r.removed_at);
-    const dead = rows.filter((r) => r.removed_at);
+    // A feed twin of a live ATS row is never indexed (see utils/feed-twins.js): its labels and
+    // location are the feed's, and an unlabeled twin slips through the very filter the ATS row
+    // fails. It is deleted from the index like a dead row, so a twin already there leaves too.
+    const twins = await findFeedTwins(rows.filter((r) => !r.removed_at), query);
+    const live = rows.filter((r) => !r.removed_at && !twins.has(r.id));
+    const dead = rows.filter((r) => r.removed_at || twins.has(r.id));
 
     if (live.length) await meili.addDocuments(live.map(meili.toDocument));
     if (dead.length) await meili.deleteDocuments(dead.map((r) => r.id));
@@ -116,6 +121,7 @@ async function syncMeili() {
 
     indexed += live.length;
     removed += dead.length;
+    feedTwins += twins.size;
     if (rows.length < BATCH) break;
     if (BATCH_PAUSE_MS) await sleep(BATCH_PAUSE_MS);
   }
@@ -128,9 +134,9 @@ async function syncMeili() {
   const companies = await syncDirtyCompanies();
 
   if (indexed || removed || companies) {
-    logger.info({ indexed, removed, batches, companies }, 'Meili sync complete');
+    logger.info({ indexed, removed, feedTwins, batches, companies }, 'Meili sync complete');
   }
-  return { indexed, removed, batches, companies };
+  return { indexed, removed, feedTwins, batches, companies };
 }
 
 const COMPANY_BATCH = parseInt(process.env.MEILI_COMPANY_BATCH || '20', 10);
@@ -161,7 +167,10 @@ async function syncDirtyCompanies() {
         [co.id, after]
       );
       if (!rows.length) break;
-      await meili.addDocuments(rows.map(meili.toDocument));
+      const twins = await findFeedTwins(rows, query);
+      const keep = rows.filter((r) => !twins.has(r.id));
+      if (keep.length) await meili.addDocuments(keep.map(meili.toDocument));
+      if (twins.size) await meili.deleteDocuments([...twins.keys()]);
       after = rows[rows.length - 1].id;
       if (rows.length < 1000) break;
     }

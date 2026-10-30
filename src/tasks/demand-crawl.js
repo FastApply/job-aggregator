@@ -47,6 +47,7 @@ const { query, closeDb } = require('../db/connection');
 const logger = require('../logger');
 const { classifyJob } = require('../utils/classify');
 const { isSupportedAts, normalizeAts, SUPPORTED_ATS } = require('../utils/supported-ats');
+const { findFeedTwins } = require('../utils/feed-twins');
 const sandboxGuard = require('../utils/sandbox-guard');
 
 const THRESHOLD = parseInt(process.env.DEMAND_MAX_RESULTS || '10', 10);
@@ -269,6 +270,12 @@ async function upsertNormalized(n) {
   // judged: the one stored on the job and the one an applicant is sent to.
   if ([n.applyUrl, n.jobUrl].some((url) => sandboxGuard.judgePosting(
     { ats: c.ats, slug: c.slug, careerUrl: c.careerUrl, url }, { source: 'demand-crawl' }).reject)) return 0;
+  // The ATS crawl already has this posting: a second row would carry the feed's labels and
+  // location instead of the ATS's (utils/feed-twins.js) — and would undo retire-feed-twins.js,
+  // since the upsert below clears removed_at.
+  if ((await findFeedTwins([{ id: 0, ats: c.ats, external_id: String(n.externalId), url: n.jobUrl }], query)).size) {
+    return 0;
+  }
   if (DRY) return 0;
   const cRes = await query(
     `INSERT INTO companies (company_name, domain, ats, ats_slug, career_url, status, origin, created_at, updated_at)

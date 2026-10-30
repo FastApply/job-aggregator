@@ -61,5 +61,7 @@ test('too few postings names no country, and a failed lookup leaves the search a
   meili.search.mock.mockImplementation(async () => { throw new Error('down'); });
   const out = await jobsSearch._withPlaceCountries({ location: ['otherville-test'], workMode: 'remote' });
   assert.deepEqual(out._placeCountries, { 'otherville-test': [] });
-  assert.equal(buildFilter(out).filter, '(is_remote = true) AND ((location_tokens = "otherville-test"))');
+  // The hyphen-free token is the same place as the index writes it (see placeSpellings).
+  assert.equal(buildFilter(out).filter,
+    '(is_remote = true) AND ((location_tokens = "otherville-test" OR location_tokens = "otherville test"))');
 });
