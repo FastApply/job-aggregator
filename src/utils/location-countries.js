@@ -111,6 +111,9 @@ const LOOKUP = new Map();
 // scrubs `[^a-z0-9' ]` relies on the letters having been folded to ASCII first, not deleted.
 const { norm } = require('./location-norm');
 const { cityAliasGroup } = require('./city-aliases');
+const {
+  alpha3Countries, subdivisionCountry, cityCodeCountry, provinceNameCountries,
+} = require('./location-subdivisions');
 
 for (const entry of TABLE.split('|')) {
   const [code, name] = entry.split(':').map((x) => x && x.trim());
@@ -212,6 +215,19 @@ const ALIASES = [
   ['ir', ['islamic republic of iran']],
   ['la', ["lao people's democratic republic"]],
   ['md', ['republic of moldova']],
+  // Places whose names CONTAIN another country's name. The n-gram scan below keeps the longest
+  // match, so naming the whole place here is what stops the shorter, wrong reading: "Sydney, New
+  // South Wales, Australia" was tagged United Kingdom (via "wales") and 22 of 400 rows a
+  // location=United Kingdom search returned on 2026-10-29 were Australian; "Port of Spain,
+  // Trinidad and Tobago" answered location=Spain.
+  // Index-only: these name a state and a city, never a country, so resolveCountry() ignores them
+  // (PLACE_NOT_COUNTRY below). A location=New South Wales search must not widen to all of Australia.
+  ['au', ['new south wales']],
+  ['tt', ['port of spain']],
+  // Hyphens are scrubbed to spaces before the scan, so the table's "Guinea-Bissau" never matched
+  // and the job read as Guinea.
+  ['gw', ['guinea bissau']],
+  ['cn', ["people's republic of china", 'peoples republic of china']],
 ];
 for (const [code, list] of ALIASES) {
   for (const a of list) LOOKUP.set(norm(a), code);
@@ -323,12 +339,21 @@ const US_TERRITORIES = new Set(['pr', 'vi', 'gu']);
  * a single bare term has no such context, so — same as the header note's own rule for
  * ambiguous-and-unrepeated cases — it emits nothing rather than guess.
  */
+// Places the n-gram scan reads as their country (so "Sydney, New South Wales" is not tagged Wales and
+// "Port of Spain, Trinidad and Tobago" is not tagged Spain) but that a search names as a place: a
+// country search for them would return every job in Australia or Trinidad and Tobago.
+const PLACE_NOT_COUNTRY = new Set(['new south wales', 'port of spain']);
+
 function resolveCountry(term) {
   const n = norm(term);
   if (n.length === 2 && US_STATES.has(n)) return null;
-  const code = LOOKUP.get(n) || LOOKUP.get(n.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim());
+  const scrubbed = n.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (PLACE_NOT_COUNTRY.has(n) || PLACE_NOT_COUNTRY.has(scrubbed)) return null;
+  const code = LOOKUP.get(n) || LOOKUP.get(scrubbed);
   return code ? { code, name: NAME.get(code) } : null;
 }
+
+const isUsStateSegment = (segment) => US_STATES.has(segment) || US_STATE_NAMES.has(segment);
 
 /**
  * Extract country codes from a stored location string. Used at index time.
@@ -342,6 +367,7 @@ function countriesFromLocation(text) {
   if (!s) return [];
 
   const found = new Set();
+  const alpha3 = alpha3Countries(text);
   let dutchOnlyByUsTown = false;
 
   // Word n-grams, not substrings. A plain `includes` tags "Indianapolis" as India and
@@ -349,15 +375,9 @@ function countriesFromLocation(text) {
   // contains them. Names run to four words ("saint vincent and the grenadines" is longer, but
   // its distinctive head matches at four).
   const words = s.replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
-  for (let n = 1; n <= 4; n++) {
-    for (let i = 0; i + n <= words.length; i++) {
-      const key = words.slice(i, i + n).join(' ');
-      if (key.length <= 2) continue; // two-letter codes only count in the final segment, below
-      const code = LOOKUP.get(key);
-      if (!code) continue;
-      if (code === 'nl') dutchOnlyByUsTown = US_TOWN_ALIASES.has(key) && !found.has('nl');
-      found.add(code);
-    }
+  for (const [key, code] of namedMatches(words)) {
+    if (code === 'nl') dutchOnlyByUsTown = US_TOWN_ALIASES.has(key) && !found.has('nl');
+    found.add(code);
   }
 
   // Trailing two-letter code: "London, England, GB, GB" -> gb. Only here, never mid-string.
@@ -400,7 +420,11 @@ function countriesFromLocation(text) {
     // Read as three segments, its CA was Canada, so a Canada search returned San Diego (live,
     // 2026-10-30: Axos's UX Design Intern, applied to for a candidate in Germany/Canada/NL).
     const bareCityState = (segments.length <= 2 || dashLedCityState(s)) && US_STATES.has(last);
-    if (!bareCityState || last === prev) found.add(last);
+    // "Adelaide, SA", "Regina, SK", "St. John's, NL": a province or state code that is also an
+    // ISO country code, beside one of that province's cities (location-subdivisions.js).
+    const province = prev ? cityCodeCountry(prev, last) : null;
+    if (province) found.add(province);
+    else if (!bareCityState || last === prev) found.add(last);
   }
 
   // "Nederland, TX, US, 77627" and "Holland, MI" are US towns. When the Dutch reading rests on
@@ -418,22 +442,53 @@ function countriesFromLocation(text) {
     // "London, United Kingdom / Austin, Texas" and "Toronto, ON, Canada; Chicago, IL, USA" are
     // both. A US state name earlier on ("Georgia, North Carolina, Tennessee") is not a country.
     const earlier = namedCodes(state.earlierText);
-    return [...new Set([...[...found].filter((c) => earlier.has(c)), ...state.codes])];
+    const provinces = provinceNameCountries(text, isUsStateSegment);
+    return [...new Set([...[...found].filter((c) => earlier.has(c) || provinces.has(c)),
+      ...state.codes, ...alpha3, ...provinces])];
   }
 
+  // Countries written as alpha-3 ("Toronto, ON, CAN", "AUS - NSW - Sydney"), and an address
+  // that ends in a state or province code with no country at all ("Ottawa, ON", "Newcastle,
+  // NSW"). See location-subdivisions.js for the measurements and the collisions avoided.
+  for (const code of alpha3) found.add(code);
+  for (const code of provinceNameCountries(text, isUsStateSegment)) found.add(code);
+  if (!found.size) {
+    const province = subdivisionCountry(segments);
+    if (province) found.add(province);
+  }
   return [...found];
 }
 
 /** Country codes spelled out in `text` — the same word n-gram scan countriesFromLocation runs. */
 function namedCodes(text) {
-  const out = new Set();
   const words = String(text).replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
-  for (let n = 1; n <= 4; n++) {
+  return new Set(namedMatches(words).map(([, code]) => code));
+}
+
+/**
+ * Country names spelled out in a list of scrubbed words, as [key, code] pairs. Word n-grams, not
+ * substrings: a plain `includes` tags "Indianapolis" as India and "Nigeria" as Niger.
+ *
+ * LONGEST MATCH WINS. Each word belongs to at most one name, and longer names are read first, so a
+ * country named inside a longer place name is not read on its own: "Papua New Guinea" is pg, not
+ * also Guinea; "Northern Ireland" is gb, not also Ireland; "South Sudan", "Equatorial Guinea",
+ * "North Korea" and "New South Wales" likewise. Before 2026-10-29 every n-gram was read, and a
+ * location=Guinea search returned 85 Papua New Guinea rows of 125, location=Ireland returned
+ * Belfast, and location=United Kingdom returned Sydney. Names run to five words ("democratic
+ * republic of the congo"). Two-letter keys never count here; see the final-segment rule.
+ */
+function namedMatches(words) {
+  const taken = new Array(words.length).fill(false);
+  const out = [];
+  for (let n = Math.min(5, words.length); n >= 1; n--) {
     for (let i = 0; i + n <= words.length; i++) {
+      if (taken.slice(i, i + n).some(Boolean)) continue;
       const key = words.slice(i, i + n).join(' ');
       if (key.length <= 2) continue;
       const code = LOOKUP.get(key);
-      if (code) out.add(code);
+      if (!code) continue;
+      for (let k = i; k < i + n; k++) taken[k] = true;
+      out.push([key, code]);
     }
   }
   return out;
