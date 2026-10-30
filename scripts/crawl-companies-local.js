@@ -26,6 +26,7 @@ const { query } = require('../src/db/connection');
 const { extractSalary, extractWorkplaceType, extractEmploymentType } = require('../src/utils/extract');
 const { stripHtml } = require('../src/utils/html');
 const { classifyJob } = require('../src/utils/classify');
+const sandboxGuard = require('../src/utils/sandbox-guard');
 const proxy = require('../src/utils/proxy'); // rotating residential proxy (only active when IPROYAL_* env set — i.e. instance E)
 const brightdata = require('../src/utils/brightdata-proxy'); // Web Unlocker (only active when BRIGHTDATA_PROXY=1 — i.e. workable)
 
@@ -81,6 +82,12 @@ async function claimBatch() {
 }
 
 async function crawlCompany(co) {
+  // An ATS demo/sandbox tenant (FA-053): not an employer, so do not even request its board. Its
+  // existing rows are left as they are (not touched, not retired) for the retire script. The
+  // claim already bumped last_synced_at, so the board is not re-claimed until it is stale again.
+  if (sandboxGuard.judgePosting({ ats: co.ats, slug: co.ats_slug, careerUrl: co.career_url }, { source: 'crawl-companies-local' }).reject) {
+    return { jobs: 0, added: 0 };
+  }
   const adapter = getAdapter(co.ats);
   // careerUrl lets the workday adapter use the pod/site already on the row; others ignore it.
   const opts = { careerUrl: co.career_url };
@@ -132,6 +139,8 @@ async function crawlCompany(co) {
   // so wiring it only there would have left the guard inert where it matters most.
   const diff = await jobsRepo.syncForCompany(co.id, co.ats, incoming, {
     partial: result && result.meta ? result.meta.capped === true : false,
+    // Already in hand from the claim: lets the sandbox guard skip its own lookup of the company.
+    company: { ats_slug: co.ats_slug, career_url: co.career_url },
   });
   // syncForCompany doesn't bump last_synced_at; we already did at claim time.
   return { jobs: incoming.length, added: diff.added };
