@@ -9,6 +9,7 @@ const { extractSalary, extractWorkplaceType, extractEmploymentType } = require('
 const { stripHtml } = require('../utils/html');
 const metrics = require('../utils/metrics');
 const { classifyJob } = require('../utils/classify');
+const sandboxGuard = require('../utils/sandbox-guard');
 
 const QUEUE_NAME = 'sync';
 
@@ -73,6 +74,12 @@ function createSyncWorker() {
 
       const adapter = getAdapter(ats);
       try {
+        // An ATS demo/sandbox tenant (FA-053) is not an employer: do not request its board. Inside
+        // the try on purpose, so the finally below still releases the ATS slot taken above. Only
+        // the slug is known here; syncForCompany also judges each posting's URL.
+        if (sandboxGuard.judgePosting({ ats, slug: atsSlug }, { source: 'sync.queue' }).reject) {
+          return { status: 'sandbox-skipped' };
+        }
         const result = await adapter.fetchJobs(atsSlug);
 
         const incomingJobs = result.jobs || result;
