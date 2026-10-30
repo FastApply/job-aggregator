@@ -94,6 +94,38 @@ async function fetchDetail(url) {
   }
 }
 
+const LOCATION_LINE = /(?:^|\n)\s*(?:job\s+|work\s+|primary\s+)?location\s*:\s*\n?\s*([^\n]{2,80})/i;
+
+const compact = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * Where a posting is, when the page carries no address microdata and the feed no g:location: 245
+ * of 800 SuccessFactors rows sampled on 2026-10-30 had no location, so a place search could not
+ * find them and a remote role read as open anywhere (BCD's "Location: US, Virtual, NOAM" was
+ * flagged worldwide). The page's own "Location:" line first, then the URL, which on many career
+ * sites is /job/<place>-<title>/<id>/ (careers.ses.com/job/Bucharest-Analyst…).
+ */
+function locationFallback(description, url, title) {
+  const text = String(description || '')
+    .replace(/<(style|script)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>|<\/(?:p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/gi, ' ');
+  const line = LOCATION_LINE.exec(text)?.[1]?.trim();
+  if (line && line.split(/\s+/).length <= 8 && !/[.!?]\s/.test(line)) return decodeEntities(line);
+
+  const slug = /\/job\/([^/?#]+)/i.exec(String(url || ''))?.[1];
+  if (!slug) return null;
+  let words;
+  try { words = decodeURIComponent(slug).split('-').filter(Boolean); } catch { return null; }
+  const wanted = compact(title);
+  if (!wanted) return null;
+  for (let i = 1; i <= Math.min(words.length - 1, 5); i += 1) {
+    if (compact(words.slice(i).join(' ')) === wanted) return words.slice(0, i).join(' ');
+  }
+  return null;
+}
+
 function parseRss(xml) {
   const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)];
   const jobs = [];
@@ -107,7 +139,7 @@ function parseRss(xml) {
       external_id: `successfactors_${gtag('id') || jobIdFromUrl(url)}`,
       title,
       department: (gtag('job_function') || '').replace(/\s*\(\d+\)\s*$/, '').trim() || null,
-      location: gtag('location') || null,
+      location: gtag('location') || locationFallback(tag('description'), url, title),
       workplace_type: null,
       employment_type: gtag('employment_type') || null,
       salary_min: null, salary_max: null, salary_currency: null, salary_interval: null,
@@ -169,7 +201,7 @@ async function fetchJobs(clientname) {
         external_id: `successfactors_${jobIdFromUrl(u)}`,
         title: d.title,
         department: null,
-        location: d.location,
+        location: d.location || locationFallback(d.description, u, d.title),
         workplace_type: null,
         employment_type: d.employment_type,
         salary_min: null, salary_max: null, salary_currency: null, salary_interval: null,
@@ -185,4 +217,4 @@ async function fetchJobs(clientname) {
   return { jobs, meta: { companyName: jobs.find(j => j.raw_data.company)?.raw_data.company || null } };
 }
 
-module.exports = { fetchJobs };
+module.exports = { fetchJobs, locationFallback };
