@@ -174,3 +174,21 @@ test('ukg employer: a heading run is not a name; the sentence that introduces th
   const d = '<h2>Melaleuca Award Winning Culture Flexibility Growth Benefits</h2><p>At Melaleuca, our mission has remained constant.</p><p>Melaleuca Award Winning Culture Flexibility Growth is hiring.</p>';
   assert.equal(ukg.employerFromText(d, 'MEL1001MEL'), 'Melaleuca');
 });
+
+test('ukg employer: board words are cut only as whole words, and text overrides a logo only on a strong alias tie', () => {
+  const logo = (alt) => `<img class="logo" alt="${alt}" data-automation="navbar-small-logo" />`;
+  const page = (alt, description) => (alt === null ? '' : logo(alt)) +
+    `<script>var d = new US.Opportunity.CandidateOpportunityDetail(${JSON.stringify({ Id: 'x', Description: description })});</script>`;
+  // Names ending in a board word's letters keep them.
+  for (const name of ['Hillebrand', 'Firebrand', 'Snagajob', 'Musical Compositions']) {
+    assert.equal(ukg.employerFromPage(logo(name), 'XYZ1000XYZ'), name);
+  }
+  for (const alt of ['Acme Careers', 'Acme (US)', 'Acme - Job Board']) assert.equal(ukg.employerFromPage(logo(alt), 'XYZ1000XYZ'), 'Acme');
+  // A heading or a three-letter coincidence in the text does not replace the logo.
+  assert.equal(ukg.employerFromPage(page('Hartford Insurance', '<p>The Company is seeking a driver.</p>'), 'THE1000THEH'), 'Hartford Insurance');
+  assert.equal(ukg.employerFromPage(page('Acme Health', '<p>Position Summary The Registered Nurse is a key member.</p>'), 'POS1000POSX'), 'Acme Health');
+  assert.equal(ukg.employerFromPage(page(null, '<p>The Company is seeking a driver.</p>'), 'THE1000THEH'), null);
+  // The alias spelling the name still lets the text win over a slogan logo, and fills a page with none.
+  assert.equal(ukg.employerFromPage(page('Unlimited Potential', '<p>Bunzl is a leading distributor.</p>'), 'BUN1000BUNZL'), 'Bunzl');
+  assert.equal(ukg.employerFromPage(page(null, '<p>Structure Medical is seeking a rep.</p>'), 'STR1026STRME'), 'Structure Medical');
+});

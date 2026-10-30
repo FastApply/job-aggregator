@@ -119,11 +119,13 @@ const decodeEntities = (v) => String(v || '')
 // A whole value that names no employer: a brand placeholder, a browser logo, or a board's generic
 // title once its "careers"/"jobs" words are gone.
 const NOT_A_NAME = /\b(?:chrome|firefox|internet explorer|edge|safari)\s+logo\b|\b(?:default|career\s+site)\s+brand\b|\?|^ready\b|\ball companies\b/i;
-const GENERIC = /^(?:unknown(?:\s+company)?|n\/?a|none|company|employer|our company|external|internal|main|home|default|english|en|us|usa|all|global|candidate|candidates|applicant|search|portal|recruiting|recruitment|talent|hiring|team|the team|join us|join our team|work with us|current|open|now hiring)$/i;
+const GENERIC = /^(?:unknown(?:\s+company)?|n\/?a|none|company|employer|our company|the company|external|internal|main|home|default|english|en|us|usa|all|global|candidate|candidates|applicant|search|portal|recruiting|recruitment|talent|hiring|team|the team|join us|join our team|work with us|current|open|now hiring)$/i;
 // Words a board title adds to the employer's name. Only ones that never end a real name on their
 // own: "Home" ("Pinnacle Home") or "US" ("Bayer US") would, so those go only in brackets.
 const BOARD_WORDS = '(?:logo(?:\\s+(?:19|20)\\d\\d)?|brand|careers?|career\\s+(?:site|portal|center|centre|page|opportunities)|jobs?|job\\s+(?:board|openings?|opportunities|postings?|search|site|page)|opportunities|openings|current\\s+openings|employment(?:\\s+opportunities)?|positions|postings|vacancies|external|internal|\\((?:\\s*(?:us|usa|en|external|internal|english)\\s*)\\))';
-const TRAILING_BOARD_WORDS = new RegExp(`(?:\\s*[-|:–,]*\\s*(?:\\b)?${BOARD_WORDS}(?:\\b|(?<=\\)))?)+\\s*$`, 'i');
+// The board word must start a word of its own (or be the bracketed "(US)"): with the boundary
+// optional, "Hillebrand", "Firebrand", "Snagajob" and "Musical Compositions" lost their endings.
+const TRAILING_BOARD_WORDS = new RegExp(`(?:\\s*[-|:–,]*\\s*(?:\\b|(?=\\())${BOARD_WORDS}(?:\\b|(?<=\\)))?)+\\s*$`, 'i');
 const LEADING_BOARD_WORDS = /^\s*(?:(?:careers?|jobs?|opportunities|employment|work)\s+(?:at|with|for)|join(?:\s+(?:the|our))?(?:\s+team)?(?:\s+at)?|welcome\s+to)\s+/i;
 
 /** A candidate name from the page, tidied, or null when what is left names nobody. */
@@ -157,6 +159,25 @@ function startsLikeTenant(name, tenant) {
   const prefix = tenantPrefix(tenant);
   return !!prefix && String(name).replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() === prefix;
 }
+// A capitalised run that opens with a section heading or a role is not an employer ("Position
+// Summary The Registered Nurse is a key member", "Company Overview ...", "Safety is a core value").
+const HEADING_FIRST = /^(?:position|job|summary|overview|about|description|responsibilities|duties|qualifications|requirements|benefits|company|department|location|schedule|shift|title|role|safety|project|registered|manager|customer|wellness|the)\b/i;
+/**
+ * Whether a name is tied to the tenant alias by more than its first three letters: the alias's
+ * trailing letters spell the name's start (BUN1000BUNZL: Bunzl; STR1026STRME: Structure Medical)
+ * or its initials (CHE1027CFMC: Checkered Flag Motor Company). Three shared letters alone are
+ * common to unrelated words ("The Company" on THE1000THEH), so only this lets the posting text
+ * override a logo or board name.
+ */
+function strongTenantTie(name, tenant) {
+  const tail = (/^[A-Za-z]{3}\d+([A-Za-z]{2,})$/.exec(String(tenant || '')) || [])[1];
+  if (!tail) return false;
+  const t = tail.toUpperCase();
+  const letters = String(name).replace(/[^A-Za-z]/g, '').toUpperCase();
+  const initials = String(name).split(/\s+/).map((w) => (w.match(/[A-Za-z]/) || [''])[0]).join('').toUpperCase();
+  return (letters.length >= 4 && (letters.startsWith(t) || t.startsWith(letters.slice(0, Math.min(5, letters.length)))))
+    || (initials.length >= 2 && (t.startsWith(initials) || initials.startsWith(t)));
+}
 function employerFromText(description, tenant) {
   if (!tenantPrefix(tenant) || !description) return null;
   const text = decodeEntities(String(description).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
@@ -174,7 +195,7 @@ function employerFromText(description, tenant) {
         const name = words.slice(at).join(' ').replace(/['’]s$/i, '').replace(/(?:\s+(?:&|of|and|the|de|for))+$/i, '').replace(/[.,'’-]+$/, '').trim();
         // A run of headings ("Melaleuca Award Winning Culture Flexibility") is not a name; the text
         // introduces the employer again ("... Benefits At Melaleuca, our mission").
-        if (name.length > 60 || name.split(/\s+/).length > 5) continue;
+        if (name.length > 60 || name.split(/\s+/).length > 5 || HEADING_FIRST.test(name)) continue;
         const intro = INTRO_AFTER.test(sentence.slice(end, end + 40)) ||
           (at === 0 ? INTRO_BEFORE.test(before) : /^(?:at|join)$/i.test(words[at - 1]));
         if (intro) found = name;
@@ -228,7 +249,10 @@ function employerFromPage(html, tenant) {
       fromText = employerFromText(value && value.Description, tenant);
     } catch { fromText = null; }
   }
-  return fromText || fromLogo || fromBoard || null;
+  // The text overrides a logo or board name only when it is tied to the alias beyond its first
+  // three letters; otherwise a heading or role in the text could replace the real logo name.
+  if (fromText && (!(fromLogo || fromBoard) || strongTenantTie(fromText, tenant))) return fromText;
+  return fromLogo || fromBoard || fromText || null;
 }
 
 /**
@@ -362,6 +386,7 @@ const fetchTimeoutMs = 15 * 60 * 1000;
 const wantsStoredState = true;
 
 module.exports = {
+  strongTenantTie,
   fetchJobs, fetchDescription, fetchPosting, employerFromPage, employerFromText, toJob, locationOf, parseSlug, parseJsonPrefix,
   fetchTimeoutMs, wantsStoredState,
 };
