@@ -18,6 +18,7 @@
  */
 const { Client } = require('pg');
 const sqlite3 = require('better-sqlite3');
+const sandboxGuard = require('../src/utils/sandbox-guard');
 
 const SUPPORTED_ATS = ['greenhouse','lever','ashby','workable','smartrecruiters','recruitee','bamboohr','breezy','pinpoint','personio','zoho','jazzhr','rippling'];
 // jworkable rows are Workable jobs under a legacy label; myworkdayjobs rows are Workday
@@ -99,7 +100,7 @@ async function newClient() {
   for (const row of pgCos.rows) pgByCareerUrl.set(row.career_url, row.id);
   console.log('  ', pgByCareerUrl.size, 'existing');
 
-  const localCompanies = db.prepare(`
+  const allLocalCompanies = db.prepare(`
     SELECT c.id AS local_id, c.company_name, c.domain, ${ATS_NORM('c.ats')} AS ats,
       c.ats_slug, c.career_url, COALESCE(c.origin, 'liftmycv') AS origin,
       COALESCE(c.logo_url, (SELECT json_extract(j.raw_data,'$.logoUrl') FROM jobs j
@@ -108,7 +109,13 @@ async function newClient() {
     WHERE c.ats IN (${ATS_FILTER}) AND c.career_url IS NOT NULL AND c.ats_slug IS NOT NULL
     ${SYNC_ORIGIN ? `AND c.origin = '${SYNC_ORIGIN}'` : ''}
   `).all();
-  console.log('Local companies in scope:', localCompanies.length);
+  // ATS demo/sandbox boards are not employers (FA-053): never push one to Postgres. A dropped
+  // company is also absent from localToPg below, so its jobs are skipped with the other
+  // "no company" rows even when the company already exists in Postgres.
+  const localCompanies = allLocalCompanies.filter((co) => !sandboxGuard.judgePosting(
+    { ats: co.ats, slug: co.ats_slug, careerUrl: co.career_url }, { source: 'sync-jobs-to-postgres' }).reject);
+  const sandboxCompanies = allLocalCompanies.length - localCompanies.length;
+  console.log('Local companies in scope:', localCompanies.length, sandboxCompanies ? `(+${sandboxCompanies} sandbox boards skipped)` : '');
 
   // Batch-upsert the ones not already in Postgres.
   const missing = localCompanies.filter(co => !pgByCareerUrl.has(co.career_url));
@@ -217,7 +224,7 @@ async function newClient() {
     }
   }
 
-  let lastId = 0, upserted = 0, skippedNoCo = 0, processed = 0, rowErrors = 0, alreadyPresent = 0;
+  let lastId = 0, upserted = 0, skippedNoCo = 0, skippedSandbox = 0, processed = 0, rowErrors = 0, alreadyPresent = 0;
   const start = Date.now();
   while (true) {
     const rows = pageStmt.all({ cutoff: cutoff || '', lastId, lim: BATCH });
@@ -228,6 +235,8 @@ async function newClient() {
     for (const j of rows) {
       const pgId = localToPg.get(j.company_id);
       if (!pgId) { skippedNoCo++; continue; }
+      // A feed company can carry a posting on a sandbox board; the job's URL is what names it.
+      if (sandboxGuard.judgePosting({ ats: j.ats, url: j.url }, { source: 'sync-jobs-to-postgres' }).reject) { skippedSandbox++; continue; }
       if (existingKeys && existingKeys.has(j.external_id + ':' + pgId)) { alreadyPresent++; continue; }
       j.pgId = pgId; ready.push(j);
     }
@@ -240,6 +249,7 @@ async function newClient() {
   }
 
   console.log(`\nDONE in ${((Date.now() - start) / 60000).toFixed(1)} min: upserted ${upserted}, skipped ${skippedNoCo}${DELTA ? `, alreadyPresent ${alreadyPresent}` : ''}, rowErrors ${rowErrors}`);
+  if (skippedSandbox) console.log(`Skipped ${skippedSandbox} jobs on ATS demo/sandbox boards (FA-053)`);
   try {
     const r1 = await query('SELECT COUNT(*) AS t FROM companies');
     const r2 = await query('SELECT COUNT(*) AS t FROM jobs WHERE removed_at IS NULL');

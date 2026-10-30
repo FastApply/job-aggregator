@@ -9,6 +9,8 @@
     "start:web": "node src/web.js",
     "start:worker": "node src/worker.js",
     "migrate": "node src/db/schema.js",
+    "check:sandbox": "node scripts/check-sandbox-postings.js",
+    "retire:sandbox": "node scripts/retire-sandbox-jobs.js",
     "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {
