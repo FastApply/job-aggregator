@@ -396,7 +396,10 @@ function countriesFromLocation(text) {
     // and where the trailing code is certainly a state. With three or more segments the trailing
     // code is a country in practice ("Toronto, ON, CA", "London, England, GB, GB") — there the
     // state, if any, sits in the middle and the earlier mid-string guard already ignores it.
-    const bareCityState = segments.length <= 2 && US_STATES.has(last);
+    // "HQ - San Diego, CA" is that shape too: a label, then the city and its state, one comma.
+    // Read as three segments, its CA was Canada, so a Canada search returned San Diego (live,
+    // 2026-10-30: Axos's UX Design Intern, applied to for a candidate in Germany/Canada/NL).
+    const bareCityState = (segments.length <= 2 || dashLedCityState(s)) && US_STATES.has(last);
     if (!bareCityState || last === prev) found.add(last);
   }
 
@@ -460,6 +463,13 @@ function namedCodes(text) {
  * The case is only a signal when the rest of the text has capitals: an all-lowercase
  * "san francisco, ca" says nothing either way and falls through to the city rules.
  */
+/** "<label> - City, ST": one comma, and the only dash comes before it. */
+function dashLedCityState(text) {
+  const parts = String(text).split(',');
+  return parts.length === 2 && /\s-\s/.test(parts[0]) && parts[0].split(/\s+-\s+/).length === 2
+    && !/[;|/]/.test(text);
+}
+
 function usStateReading(segments, rawText) {
   // Several addresses joined by ";" or "|" share one comma segment: "Toronto, ON, Canada;
   // Chicago, IL, USA". Only the last one belongs to the trailing state.
@@ -517,7 +527,7 @@ function usStateReading(segments, rawText) {
   // ON, CA"), but a state code that is no country code at all (IA, TX, OH, NY) cannot be one, and
   // the job got no country — the search canary lost it on 2026-10-10.
   const stateOnly = !NAME.has(st);
-  if (!usTail && !usHead && end !== 2 && !startsAddress && !stateOnly) return null;
+  if (!usTail && !usHead && end !== 2 && !dashLedCityState(norm(rawText)) && !startsAddress && !stateOnly) return null;
   if (usTail || usHead) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
 
   const rawLast = String(rawText).split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean).pop() || '';
