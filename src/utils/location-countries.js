@@ -167,6 +167,17 @@ const ALIASES = [
   ['ir', ['islamic republic of iran']],
   ['la', ["lao people's democratic republic"]],
   ['md', ['republic of moldova']],
+  // Places whose names CONTAIN another country's name. The n-gram scan below keeps the longest
+  // match, so naming the whole place here is what stops the shorter, wrong reading: "Sydney, New
+  // South Wales, Australia" was tagged United Kingdom (via "wales") and 22 of 400 rows a
+  // location=United Kingdom search returned on 2026-10-29 were Australian; "Port of Spain,
+  // Trinidad and Tobago" answered location=Spain.
+  ['au', ['new south wales']],
+  ['tt', ['port of spain']],
+  // Hyphens are scrubbed to spaces before the scan, so the table's "Guinea-Bissau" never matched
+  // and the job read as Guinea.
+  ['gw', ['guinea bissau']],
+  ['cn', ["people's republic of china", 'peoples republic of china']],
 ];
 for (const [code, list] of ALIASES) {
   for (const a of list) LOOKUP.set(norm(a), code);
@@ -290,15 +301,9 @@ function countriesFromLocation(text) {
   // contains them. Names run to four words ("saint vincent and the grenadines" is longer, but
   // its distinctive head matches at four).
   const words = s.replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
-  for (let n = 1; n <= 4; n++) {
-    for (let i = 0; i + n <= words.length; i++) {
-      const key = words.slice(i, i + n).join(' ');
-      if (key.length <= 2) continue; // two-letter codes only count in the final segment, below
-      const code = LOOKUP.get(key);
-      if (!code) continue;
-      if (code === 'nl') dutchOnlyByUsTown = US_TOWN_ALIASES.has(key) && !found.has('nl');
-      found.add(code);
-    }
+  for (const [key, code] of namedMatches(words)) {
+    if (code === 'nl') dutchOnlyByUsTown = US_TOWN_ALIASES.has(key) && !found.has('nl');
+    found.add(code);
   }
 
   // Trailing two-letter code: "London, England, GB, GB" -> gb. Only here, never mid-string.
@@ -364,14 +369,34 @@ function countriesFromLocation(text) {
 
 /** Country codes spelled out in `text` — the same word n-gram scan countriesFromLocation runs. */
 function namedCodes(text) {
-  const out = new Set();
   const words = String(text).replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
-  for (let n = 1; n <= 4; n++) {
+  return new Set(namedMatches(words).map(([, code]) => code));
+}
+
+/**
+ * Country names spelled out in a list of scrubbed words, as [key, code] pairs. Word n-grams, not
+ * substrings: a plain `includes` tags "Indianapolis" as India and "Nigeria" as Niger.
+ *
+ * LONGEST MATCH WINS. Each word belongs to at most one name, and longer names are read first, so a
+ * country named inside a longer place name is not read on its own: "Papua New Guinea" is pg, not
+ * also Guinea; "Northern Ireland" is gb, not also Ireland; "South Sudan", "Equatorial Guinea",
+ * "North Korea" and "New South Wales" likewise. Before 2026-10-29 every n-gram was read, and a
+ * location=Guinea search returned 85 Papua New Guinea rows of 125, location=Ireland returned
+ * Belfast, and location=United Kingdom returned Sydney. Names run to five words ("democratic
+ * republic of the congo"). Two-letter keys never count here; see the final-segment rule.
+ */
+function namedMatches(words) {
+  const taken = new Array(words.length).fill(false);
+  const out = [];
+  for (let n = Math.min(5, words.length); n >= 1; n--) {
     for (let i = 0; i + n <= words.length; i++) {
+      if (taken.slice(i, i + n).some(Boolean)) continue;
       const key = words.slice(i, i + n).join(' ');
       if (key.length <= 2) continue;
       const code = LOOKUP.get(key);
-      if (code) out.add(code);
+      if (!code) continue;
+      for (let k = i; k < i + n; k++) taken[k] = true;
+      out.push([key, code]);
     }
   }
   return out;
