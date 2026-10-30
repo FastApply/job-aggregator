@@ -36,6 +36,7 @@ const logger = require('../logger');
 const { classifyJob } = require('../utils/classify');
 const { isSupportedAts, normalizeAts, SUPPORTED_ATS } = require('../utils/supported-ats');
 const { findFeedTwins } = require('../utils/feed-twins');
+const { workableFeedCompany } = require('../utils/workable-feed-company');
 
 const THRESHOLD = parseInt(process.env.DEMAND_MAX_RESULTS || '10', 10);
 const BATCH = parseInt(process.env.DEMAND_BATCH || '25', 10);
@@ -110,6 +111,16 @@ function deriveCompany(applyUrl, atsHint, companyName, sourceName) {
     if (!g) return { ats: 'paylocity', slug: null, careerUrl: null, domain: null };
     ats = 'paylocity'; slug = g[0].toLowerCase();
     careerUrl = `https://recruiting.paylocity.com/recruiting/jobs/All/${slug}`;
+  }
+  // Workable's marketplace and short links carry no account in the first path word, which the
+  // branch below would take for one: "view", "company" and "j" became company rows holding 37,910
+  // live postings from thousands of employers (2026-10-30), under whichever name came first. The
+  // repeat-company rule then read one application there as a repeat at all the others, and a
+  // candidate's blacklist could not see them. Key each employer on its own name instead.
+  else if (host.endsWith('workable.com') && (host === 'jobs.workable.com' || parts[0] === 'j')) {
+    const c = workableFeedCompany(clean, companyName);
+    if (!c) return { ats: 'workable', slug: null, careerUrl: null, domain: null };
+    return { ats: 'workable', slug: c.slug, careerUrl: c.careerUrl, domain: 'jobs.workable.com' };
   }
   // Path-slug ATS (boards.greenhouse.io/{slug}, jobs.lever.co/{slug}, ...)
   else if (parts[0] && /greenhouse|lever|ashby|workable|smartrecruiters/.test(host)) {
