@@ -111,6 +111,9 @@ const LOOKUP = new Map();
 // scrubs `[^a-z0-9' ]` relies on the letters having been folded to ASCII first, not deleted.
 const { norm } = require('./location-norm');
 const { cityAliasGroup } = require('./city-aliases');
+const {
+  alpha3Countries, subdivisionCountry, cityCodeCountry, provinceNameCountries,
+} = require('./location-subdivisions');
 
 for (const entry of TABLE.split('|')) {
   const [code, name] = entry.split(':').map((x) => x && x.trim());
@@ -350,6 +353,8 @@ function resolveCountry(term) {
   return code ? { code, name: NAME.get(code) } : null;
 }
 
+const isUsStateSegment = (segment) => US_STATES.has(segment) || US_STATE_NAMES.has(segment);
+
 /**
  * Extract country codes from a stored location string. Used at index time.
  *
@@ -362,6 +367,7 @@ function countriesFromLocation(text) {
   if (!s) return [];
 
   const found = new Set();
+  const alpha3 = alpha3Countries(text);
   let dutchOnlyByUsTown = false;
 
   // Word n-grams, not substrings. A plain `includes` tags "Indianapolis" as India and
@@ -411,7 +417,11 @@ function countriesFromLocation(text) {
     // code is a country in practice ("Toronto, ON, CA", "London, England, GB, GB") — there the
     // state, if any, sits in the middle and the earlier mid-string guard already ignores it.
     const bareCityState = segments.length <= 2 && US_STATES.has(last);
-    if (!bareCityState || last === prev) found.add(last);
+    // "Adelaide, SA", "Regina, SK", "St. John's, NL": a province or state code that is also an
+    // ISO country code, beside one of that province's cities (location-subdivisions.js).
+    const province = prev ? cityCodeCountry(prev, last) : null;
+    if (province) found.add(province);
+    else if (!bareCityState || last === prev) found.add(last);
   }
 
   // "Nederland, TX, US, 77627" and "Holland, MI" are US towns. When the Dutch reading rests on
@@ -429,9 +439,20 @@ function countriesFromLocation(text) {
     // "London, United Kingdom / Austin, Texas" and "Toronto, ON, Canada; Chicago, IL, USA" are
     // both. A US state name earlier on ("Georgia, North Carolina, Tennessee") is not a country.
     const earlier = namedCodes(state.earlierText);
-    return [...new Set([...[...found].filter((c) => earlier.has(c)), ...state.codes])];
+    const provinces = provinceNameCountries(text, isUsStateSegment);
+    return [...new Set([...[...found].filter((c) => earlier.has(c) || provinces.has(c)),
+      ...state.codes, ...alpha3, ...provinces])];
   }
 
+  // Countries written as alpha-3 ("Toronto, ON, CAN", "AUS - NSW - Sydney"), and an address
+  // that ends in a state or province code with no country at all ("Ottawa, ON", "Newcastle,
+  // NSW"). See location-subdivisions.js for the measurements and the collisions avoided.
+  for (const code of alpha3) found.add(code);
+  for (const code of provinceNameCountries(text, isUsStateSegment)) found.add(code);
+  if (!found.size) {
+    const province = subdivisionCountry(segments);
+    if (province) found.add(province);
+  }
   return [...found];
 }
 

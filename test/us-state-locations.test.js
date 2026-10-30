@@ -96,7 +96,7 @@ test('a country named earlier in a multi-place string is kept', () => {
 test('unchanged: shapes with no US state', () => {
   is('Remote - United States', ['us']);
   is('London, England, GB, GB', ['gb']);
-  is('Toronto, ON', []);
+  is('Toronto, ON', ['ca']); // a Canadian province code (location-subdivisions.test.js)
   is('Madrid, España', ['es']);
 });
 

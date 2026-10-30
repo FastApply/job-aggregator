@@ -17,6 +17,7 @@ const { isShortAlias } = require('../../utils/location-aliases');
 const { resolveCountry, norm, AMBIGUOUS_COUNTRY_NAMES } = require('../../utils/location-countries');
 const { queryTokens } = require('../../utils/city-aliases');
 const { placeVariants, usStateCode } = require('../../utils/location-places');
+const { subdivisionCode } = require('../../utils/location-subdivisions');
 const { parsePostedWindow } = require('../../utils/posted-window');
 const { regionCountries, canonicalSpelling } = require('../../utils/location-regions');
 const { normalizeEmploymentType } = require('../../utils/extract');
@@ -84,6 +85,10 @@ function clausesForPlace(term) {
     }
     const code = usStateCode(place);
     if (code) out.push(`(location_tokens = ${q(code)} AND location_countries = ${q('us')})`);
+    // The same for Australian states and Canadian provinces: "Wollongong, NSW, Australia" and
+    // "Toronto, ON, Canada" never say New South Wales or Ontario (location-subdivisions.js).
+    const sub = subdivisionCode(place);
+    if (sub) out.push(`(location_tokens = ${q(sub[0])} AND location_countries = ${q(sub[1])})`);
   }
   // A phrase longer than the tokeniser holds as one unit still needs the substring scan.
   // CONTAINS runs against the raw `location` field, which is NOT folded, so it gets the
