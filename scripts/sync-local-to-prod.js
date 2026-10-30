@@ -70,6 +70,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Client } = require('pg');
+const sandboxGuard = require('../src/utils/sandbox-guard');
 
 const LOCAL_URL = process.env.LOCAL_URL || 'postgres://codev@localhost:5432/jobs_local';
 const PROD_URL = process.env.PROD_URL || readProdUrl();
@@ -190,7 +191,7 @@ async function main() {
   console.log(`  held back: company not in prod     : ${n(s.local_only_company)}`);
   console.log(`  held back: retired locally         : ${n(s.locally_removed)}\n`);
 
-  const stats = { examined: 0, insert: 0, fillDesc: 0, refreshSeen: 0, unchanged: 0, noCompany: 0 };
+  const stats = { examined: 0, insert: 0, fillDesc: 0, refreshSeen: 0, unchanged: 0, noCompany: 0, sandboxSkipped: 0 };
   const samples = [];
   // Resume point. Promotion is idempotent — an insert that already landed becomes a no-op — so a
   // restart is safe, but re-walking tens of thousands of rows at ~770/min is an hour thrown away.
@@ -255,6 +256,12 @@ async function main() {
       const toUpdate = [];
       for (const r of rows) {
         if (!knownCompany.has(String(r.company_id))) { stats.noCompany++; continue; }
+        // ATS demo/sandbox boards are not employers (FA-053): neither insert nor refresh them in
+        // prod. Only the ats and URL are on this row, which is enough to name the board.
+        if (sandboxGuard.judgePosting({ ats: r.ats, url: r.url }, { source: 'sync-local-to-prod' }).reject) {
+          stats.sandboxSkipped++;
+          continue;
+        }
         const hit = have.get(`${r.company_id} ${r.external_id}`);
         if (!hit) {
           stats.insert++;
@@ -321,6 +328,7 @@ async function main() {
   console.log(`  ${APPLY ? 'refreshed last_seen' : 'would refresh last_seen'}  : ${n(stats.refreshSeen)}`);
   console.log(`  already current          : ${n(stats.unchanged)}`);
   console.log(`  skipped, company absent  : ${n(stats.noCompany)}`);
+  console.log(`  skipped, sandbox board   : ${n(stats.sandboxSkipped)}  <- ATS demo tenants (FA-053)`);
   if (!APPLY) console.log('\nSHADOW — nothing was written. Re-run with APPLY=1 to arm.');
 
   await local.end();

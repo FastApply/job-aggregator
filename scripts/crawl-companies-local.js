@@ -26,6 +26,7 @@ const { query } = require('../src/db/connection');
 const { extractSalary, extractWorkplaceType, extractEmploymentType } = require('../src/utils/extract');
 const { stripHtml } = require('../src/utils/html');
 const { classifyJob } = require('../src/utils/classify');
+const sandboxGuard = require('../src/utils/sandbox-guard');
 const proxy = require('../src/utils/proxy'); // rotating residential proxy (only active when IPROYAL_* env set — i.e. instance E)
 const brightdata = require('../src/utils/brightdata-proxy'); // Web Unlocker (only active when BRIGHTDATA_PROXY=1 — i.e. workable)
 
@@ -75,18 +76,48 @@ async function claimBatch() {
           LIMIT ${BATCH}
           FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, ats, ats_slug, career_url, error_message`
+       RETURNING id, ats, ats_slug, career_url, error_message, company_name`
   );
   return rows;
 }
 
 async function crawlCompany(co) {
+  // An ATS demo/sandbox tenant (FA-053): not an employer, so do not even request its board. Its
+  // existing rows are left as they are (not touched, not retired) for the retire script. The
+  // claim already bumped last_synced_at, so the board is not re-claimed until it is stale again.
+  if (sandboxGuard.judgePosting({ ats: co.ats, slug: co.ats_slug, careerUrl: co.career_url }, { source: 'crawl-companies-local' }).reject) {
+    return { jobs: 0, added: 0 };
+  }
   const adapter = getAdapter(co.ats);
   // careerUrl lets the workday adapter use the pod/site already on the row; others ignore it.
-  const result = await withTimeout(adapter.fetchJobs(co.ats_slug, { careerUrl: co.career_url }), FETCH_TIMEOUT, co.ats);
+  const opts = { careerUrl: co.career_url };
+  if (adapter.wantsStoredState) {
+    // UKG: the postings already holding text (so only new ones are read) and the name the row has.
+    const { rows } = await query(
+      'SELECT external_id FROM jobs WHERE company_id = ? AND removed_at IS NULL AND description IS NOT NULL',
+      [co.id]
+    );
+    opts.describedIds = new Set(rows.map((r) => r.external_id));
+    opts.companyName = co.company_name || null;
+  }
+  // An adapter that reads posting pages or pages a big board needs longer than FETCH_TIMEOUT and
+  // says so (fetchTimeoutMs), as render-deploy's copy of this crawler already honours.
+  const result = await withTimeout(adapter.fetchJobs(co.ats_slug, opts), adapter.fetchTimeoutMs || FETCH_TIMEOUT, co.ats);
   // A tenant that answers again has its discovery-miss count cleared.
   if (co.error_message && isDiscoveryMiss(co.error_message)) {
     await query('UPDATE companies SET error_message = NULL WHERE id = ?', [co.id]).catch(() => {});
+  }
+  // The employer, when the adapter read one and the row has none. Only ever fills a blank name: the
+  // BullMQ sync (src/queues/sync.queue.js) writes the adapter's name unconditionally, but this
+  // crawler wrote none at all, so UKG companies stayed nameless and every posting read "Unknown
+  // Company" to FastApply. The companies trigger re-indexes the company's jobs when the name
+  // changes; index_dirty_at is set here too for clarity.
+  const metaName = result && result.meta && typeof result.meta.companyName === 'string' ? result.meta.companyName.trim() : '';
+  if (metaName && !co.company_name) {
+    await query(
+      "UPDATE companies SET company_name = ?, index_dirty_at = NOW(), updated_at = NOW() WHERE id = ? AND (company_name IS NULL OR company_name = '')",
+      [metaName.slice(0, 255), co.id]
+    ).catch((e) => console.error(`company name write failed for ${co.id}: ${e.message}`));
   }
   const incoming = (result && (result.jobs || result)) || [];
   if (!incoming.length) return { jobs: 0, added: 0 };
@@ -108,6 +139,8 @@ async function crawlCompany(co) {
   // so wiring it only there would have left the guard inert where it matters most.
   const diff = await jobsRepo.syncForCompany(co.id, co.ats, incoming, {
     partial: result && result.meta ? result.meta.capped === true : false,
+    // Already in hand from the claim: lets the sandbox guard skip its own lookup of the company.
+    company: { ats_slug: co.ats_slug, career_url: co.career_url },
   });
   // syncForCompany doesn't bump last_synced_at; we already did at claim time.
   return { jobs: incoming.length, added: diff.added };
