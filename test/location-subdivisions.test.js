@@ -152,3 +152,9 @@ test('an ordinary place is unchanged', () => {
   assert.equal(buildFilter({ location: 'Illinois' }).filter,
     '((location_tokens = "illinois" OR (location_tokens = "il" AND location_countries = "us")))');
 });
+
+test('a Victoria search stays a place search: it is also the capital of British Columbia', () => {
+  assert.doesNotMatch(buildFilter({ location: 'Victoria' }).filter, /"vic"/);
+  assert.doesNotMatch(buildFilter({ location: 'Victoria, BC' }).filter, /"vic"/);
+  assert.match(buildFilter({ location: 'Victoria' }).filter, /location_tokens = "victoria"/);
+});

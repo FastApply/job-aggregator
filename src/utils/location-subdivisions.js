@@ -130,8 +130,10 @@ function subdivisionCountry(segments) {
 
 // Query side: a state / province NAME -> the code postings write, and the country that code
 // must sit in to mean this place (ON alone is a word; NSW inside Malta's "Tas-Sliema" is not).
+// Left out, as on the index side: Victoria, which is also the capital of British Columbia (and a
+// Texas city), so location=Victoria or "Victoria, BC" must not also match every Melbourne "VIC".
 const NAME_TO_CODE = {
-  'new south wales': ['nsw', 'au'], queensland: ['qld', 'au'], victoria: ['vic', 'au'],
+  'new south wales': ['nsw', 'au'], queensland: ['qld', 'au'],
   tasmania: ['tas', 'au'], 'australian capital territory': ['act', 'au'],
   'western australia': ['wa', 'au'], 'south australia': ['sa', 'au'],
   'northern territory': ['nt', 'au'],
