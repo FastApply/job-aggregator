@@ -11,13 +11,13 @@ const kula = require('../src/adapters/kula');
 test('posting and board links name their board in the adapters\' slug shape', () => {
   const cases = [
     ['https://recruiting.ultipro.com/OHI1003/JobBoard/38C0CBD7-a4ea-41e1-82d8-dd797bfd73ae/OpportunityDetail?opportunityId=x',
-      { ats: 'ukg', slug: 'recruiting.ultipro.com/OHI1003/38c0cbd7-a4ea-41e1-82d8-dd797bfd73ae' }],
+      { ats: 'ukg', slug: 'recruiting.ultipro.com/ohi1003/38c0cbd7-a4ea-41e1-82d8-dd797bfd73ae' }],
     ['https://gusea1p01.rec.pro.ukg.net/BOS1501BGMP/JobBoard/3ebc7d47-2d31-4b8d-817d-db673315517a/?q=',
-      { ats: 'ukg', slug: 'gusea1p01.rec.pro.ukg.net/BOS1501BGMP/3ebc7d47-2d31-4b8d-817d-db673315517a' }],
+      { ats: 'ukg', slug: 'gusea1p01.rec.pro.ukg.net/bos1501bgmp/3ebc7d47-2d31-4b8d-817d-db673315517a' }],
     ['https://myjobs.adp.com/RuanCareers/cx/job-details?reqId=5001225334400', { ats: 'adp', slug: 'ruancareers' }],
     ['https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?ccId=1&cid=69ABE2ED-59b3-4ab3-bd4a-b2c8fc054e18&jobId=1',
       { ats: 'adp_workforcenow', slug: '69abe2ed-59b3-4ab3-bd4a-b2c8fc054e18' }],
-    ['https://jobs.silkroad.com/SpecCorp/Careers/jobs/145', { ats: 'silkroad', slug: 'SpecCorp/Careers' }],
+    ['https://jobs.silkroad.com/SpecCorp/Careers/jobs/145', { ats: 'silkroad', slug: 'speccorp/careers' }],
     ['https://jobs.gem.com/Apartment-List/am9icG9z', { ats: 'gem', slug: 'apartment-list' }],
     ['https://careers.kula.ai/invoca/37535', { ats: 'kula', slug: 'invoca' }],
   ];

@@ -7,17 +7,21 @@ const SKIP_FIRST_SEGMENT = new Set([
   'errorhandler', 'content', 'scripts', 'bundles', 'account', 'home', 'static',
 ]);
 
-/** { ats, slug } for the employer board a URL belongs to, or null. */
+/**
+ * { ats, slug } for the employer board a URL belongs to, or null. Slugs are lower-cased throughout,
+ * as the 2026-10-29 production seed and scripts/lib/board-from-url.js store them: UKG and SilkRoad
+ * answer either case, and a mixed-case slug makes a second career_url for the same board.
+ */
 function boardFromUrl(url) {
   const u = String(url || '').trim();
   let m = u.match(/^https?:\/\/((?:recruiting2?\.ultipro\.(?:com|ca))|(?:[a-z0-9-]+\.rec\.pro\.ukg\.net))\/([A-Za-z0-9]{2,20})\/JobBoard\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-  if (m) return { ats: 'ukg', slug: `${m[1].toLowerCase()}/${m[2]}/${m[3].toLowerCase()}` };
+  if (m) return { ats: 'ukg', slug: `${m[1].toLowerCase()}/${m[2].toLowerCase()}/${m[3].toLowerCase()}` };
   m = u.match(/^https?:\/\/myjobs\.adp\.com\/([^/?#]+)\//i);
   if (m) return keep('adp', m[1].toLowerCase());
   m = u.match(/^https?:\/\/workforcenow\.adp\.com\/[^#]*[?&]cid=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
   if (m) return { ats: 'adp_workforcenow', slug: m[1].toLowerCase() };
   m = u.match(/^https?:\/\/jobs\.silkroad\.com\/([A-Za-z0-9][\w.-]*)\/([A-Za-z0-9][\w.-]*)(?:[/?#]|$)/i);
-  if (m && m[2].toLowerCase() !== 'jobs') return keep('silkroad', `${m[1]}/${m[2]}`);
+  if (m && m[2].toLowerCase() !== 'jobs') return keep('silkroad', `${m[1]}/${m[2]}`.toLowerCase());
   m = u.match(/^https?:\/\/jobs\.gem\.com\/([^/?#]+)/i);
   if (m) return keep('gem', m[1].toLowerCase());
   m = u.match(/^https?:\/\/careers\.kula\.ai\/([^/?#]+)/i);
