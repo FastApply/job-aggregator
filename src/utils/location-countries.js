@@ -401,7 +401,10 @@ function countriesFromLocation(text) {
     // and where the trailing code is certainly a state. With three or more segments the trailing
     // code is a country in practice ("Toronto, ON, CA", "London, England, GB, GB") — there the
     // state, if any, sits in the middle and the earlier mid-string guard already ignores it.
-    const bareCityState = segments.length <= 2 && US_STATES.has(last);
+    // "HQ - San Diego, CA" is that shape too: a label, then the city and its state, one comma.
+    // Read as three segments, its CA was Canada, so a Canada search returned San Diego (live,
+    // 2026-10-30: Axos's UX Design Intern, applied to for a candidate in Germany/Canada/NL).
+    const bareCityState = (segments.length <= 2 || dashLedCityState(s)) && US_STATES.has(last);
     // "Adelaide, SA", "Regina, SK", "St. John's, NL": a province or state code that is also an
     // ISO country code, beside one of that province's cities (location-subdivisions.js).
     const province = prev ? cityCodeCountry(prev, last) : null;
@@ -500,6 +503,13 @@ function namedMatches(words) {
  * The case is only a signal when the rest of the text has capitals: an all-lowercase
  * "san francisco, ca" says nothing either way and falls through to the city rules.
  */
+/** "<label> - City, ST": one comma, and the only dash comes before it. */
+function dashLedCityState(text) {
+  const parts = String(text).split(',');
+  return parts.length === 2 && /\s-\s/.test(parts[0]) && parts[0].split(/\s+-\s+/).length === 2
+    && !/[;|/]/.test(text);
+}
+
 function usStateReading(segments, rawText) {
   // Several addresses joined by ";" or "|" share one comma segment: "Toronto, ON, Canada;
   // Chicago, IL, USA". Only the last one belongs to the trailing state.
@@ -550,7 +560,7 @@ function usStateReading(segments, rawText) {
   // and the job got no country at all — invisible to location=United States (the search canary
   // caught "US - Austin, TX" on 2026-10-04; ~16k live jobs have this shape).
   const usHead = end === 3 && LOOKUP.get(clean[0]) === 'us' && !US_STATE_NAMES.has(clean[0]);
-  if (!usTail && !usHead && end !== 2 && !startsAddress) return null;
+  if (!usTail && !usHead && end !== 2 && !dashLedCityState(norm(rawText)) && !startsAddress) return null;
   if (usTail || usHead) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
 
   const rawLast = String(rawText).split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean).pop() || '';
