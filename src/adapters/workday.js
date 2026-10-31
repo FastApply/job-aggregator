@@ -130,6 +130,19 @@ async function fetchJobDetail(baseUrl, externalPath) {
   }
 }
 
+// The list page names a posting with several offices only by their number ("4 Locations"), and
+// the detail call is what gives the place. When that call failed the count went into `location`:
+// 8,285 rows seen in the last two days, 11,641 live in all (2026-10-31). They match no location
+// search, and First Apply could not tell that Constellation Brands' IT Product Manager, whose
+// offices are in the US, was out of reach of a Canadian citizen. Null keeps the stored place.
+const PLACE_COUNT = /^\s*\d+\s+locations?\s*$/i;
+
+function placeOf(detail, posting) {
+  if (detail?.location) return detail.location;
+  const listed = posting?.locationsText;
+  return listed && !PLACE_COUNT.test(listed) ? listed : null;
+}
+
 /**
  * Extract salary from job description HTML if present.
  */
@@ -330,7 +343,7 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
         external_id: `workday_${jobReqId || posting.externalPath}`,
         title: posting.title,
         department: deptMap.get(posting.externalPath) || null,
-        location: detail?.location || posting.locationsText || null,
+        location: placeOf(detail, posting),
         workplace_type: null,
         employment_type: detail?.timeType || null,
         salary_min: salary.salary_min || null,
@@ -360,4 +373,4 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
   return { jobs, meta: { companyName, logoUrl, capped } };
 }
 
-module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT };
+module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT, placeOf, PLACE_COUNT };
