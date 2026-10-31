@@ -355,6 +355,15 @@ function resolveCountry(term) {
 
 const isUsStateSegment = (segment) => US_STATES.has(segment) || US_STATE_NAMES.has(segment);
 
+// "US-TX-Austin", "USA-VA-Herndon", "CA-ON-Toronto": country, state and city joined by dashes, as
+// Workday and iCIMS tenants write them. Read as words, "US-WA-Seattle" named no country (23,403
+// live rows in the local corpus on 2026-10-30, so location=United States missed them; 1,299 for
+// CA-XX), and "US-CA-Ontario" was Canada by the province name. The city belongs to that address,
+// so it is not read again. The state must be one of that country's: no Canadian province code is
+// a US state, so "CA-ON-..." cannot be California.
+const CA_PROVINCES = new Set(['ab', 'bc', 'mb', 'nb', 'nl', 'ns', 'nt', 'nu', 'on', 'pe', 'qc', 'sk', 'yt']);
+const DASH_HEAD = /(^|[,;|/]\s*)(US|USA|CA|CAN)-([A-Za-z]{2})-[^,;|/]+/g;
+
 /**
  * Extract country codes from a stored location string. Used at index time.
  *
@@ -362,6 +371,18 @@ const isUsStateSegment = (segment) => US_STATES.has(segment) || US_STATE_NAMES.h
  * segment — see the header note on CA/IN being US state codes.
  */
 function countriesFromLocation(text) {
+  const heads = new Set();
+  const rest = String(text || '').replace(DASH_HEAD, (whole, lead, country, st) => {
+    const code = country.toUpperCase().startsWith('US') ? 'us' : 'ca';
+    if (!(code === 'us' ? US_STATES : CA_PROVINCES).has(st.toLowerCase())) return whole;
+    heads.add(code);
+    return lead;
+  });
+  if (!heads.size) return readCountries(text);
+  return [...new Set([...heads, ...(/[a-z0-9]/i.test(rest) ? readCountries(rest) : [])])];
+}
+
+function readCountries(text) {
   // Dots go first so "Remote - U.S." reads as "us" in both scans below.
   const s = norm(text).replace(/\./g, '');
   if (!s) return [];

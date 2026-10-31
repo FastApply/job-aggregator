@@ -85,6 +85,15 @@ for (const [code, country, cities] of CITY_CODES) {
 const scrub = (s) => String(s).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
   .replace(/\./g, '').replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
+// Alpha-3 codes that US postings write for something else, and the cue that must sit in the same
+// address before the code counts as the country. EST is the US time zone ("Remote - EST",
+// "FL - Virtual - B+ - EST", "CST/EST"), against one "Tallinn, EST" in the local corpus; AUS is
+// Austin's airport ("Austin, TX - AUS"), while "International - Townsville - AUS" is Australia.
+const ALPHA3_NEEDS = {
+  est: (address) => /estonia|eesti|tallinn|tartu|narva|p[aä]rnu/i.test(address),
+  aus: (address) => !/\baustin\b/i.test(address),
+};
+
 /**
  * Countries named by an alpha-3 code at the start or end of an address. Reads the RAW text: the
  * code must be in capitals. Several addresses can share one string ("Boeblingen, DEU / Munich,
@@ -100,8 +109,9 @@ function alpha3Countries(rawText) {
     // "Cremorne, AUS-VIC, AUS", "Huangpu, Shanghai - CHN": the code ends it.
     const tail = parts[parts.length - 1];
     for (const candidate of [head, tail]) {
-      if (/^[A-Z]{3}$/.test(candidate) && ALPHA3[candidate.toLowerCase()]) {
-        out.add(ALPHA3[candidate.toLowerCase()]);
+      const code = candidate.toLowerCase();
+      if (/^[A-Z]{3}$/.test(candidate) && ALPHA3[code] && (!ALPHA3_NEEDS[code] || ALPHA3_NEEDS[code](address))) {
+        out.add(ALPHA3[code]);
       }
     }
   }

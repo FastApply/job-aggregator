@@ -15,14 +15,19 @@
  * (a tag read later from a late-fetched description must survive), so a job the new reader leaves
  * untagged keeps its old "remote".
  *
- * Rewrites a row only when its text has the word and the reader no longer calls it remote. A row
- * whose ATS really sends remote has its tag put back by the next crawl, because an adapter's tag
- * replaces the stored one; a row with no such word was tagged by the ATS and is left alone.
+ * Rewrites a row only when its text has the word and the reader no longer calls it remote, and only
+ * on the ATSes whose adapter sends no work model of its own (NO_WORK_MODEL: workplace_type null, or
+ * read from the title and location, which retag() reads too) — the audit's own population. On an
+ * ATS that does send one (Ashby, Lever, Workable, SmartRecruiters, ...) the stored remote may be the
+ * ATS's word, and the next crawl puts it back only if that ATS is still scheduled: a paused account
+ * would lose a true tag for good. Feed rows (external_id not "<ats>_...") are skipped as well:
+ * demand-crawl's upsert never rewrites their tag, so nothing would restore one cleared by mistake.
  * is_remote and remote_worldwide are re-derived the way the crawl derives them. The index trigger
  * queues each changed row, so this waits while the outbox holds MAX_OUTBOX rows.
  *
  * Walks the primary key, resumable from CKPT.
- * Env: BATCH (5000 ids per step) · MAX_OUTBOX (20000) · POLL_MS (20000) · CKPT
+ * Env: BATCH (5000 ids per step) · MAX_OUTBOX (20000) · POLL_MS (20000) · CKPT · ATS (comma list,
+ * overrides NO_WORK_MODEL)
  */
 const fs = require('fs');
 const { stripHtml } = require('../src/utils/html');
@@ -30,6 +35,12 @@ const { extractWorkplaceType } = require('../src/utils/extract');
 const { classifyJob } = require('../src/utils/classify');
 
 const REMOTE_WORD = /\bremote(?:ly)?\b|\bwork from home\b|\bwfh\b/i;
+
+// Adapters that set workplace_type to null, or only from the title/location (src/adapters/*.js).
+const NO_WORK_MODEL = [
+  'greenhouse', 'workday', 'successfactors', 'taleo', 'avature', 'brassring', 'personio',
+  'reachmee', 'varbi', 'visma', 'adp', 'adp_workforcenow', 'manatal', 'silkroad', 'jazzhr', 'jobvite',
+];
 
 /** Pure. The row's new tags, or null when it stays as stored. */
 function retag(row) {
@@ -52,6 +63,7 @@ async function main() {
   const MAX_OUTBOX = parseInt(process.env.MAX_OUTBOX || '20000', 10);
   const POLL_MS = parseInt(process.env.POLL_MS || '20000', 10);
   const CKPT = process.env.CKPT || '/tmp/remote-flag-backfill.pos';
+  const ATS = process.env.ATS ? process.env.ATS.split(',').map((a) => a.trim()).filter(Boolean) : NO_WORK_MODEL;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const run = async (sql, params = []) => {
     for (let attempt = 0; ; attempt++) {
@@ -65,7 +77,7 @@ async function main() {
     }
   };
 
-  console.log(`mode: ${APPLY ? 'APPLY' : 'SHADOW'}`);
+  console.log(`mode: ${APPLY ? 'APPLY' : 'SHADOW'} · ats: ${ATS.join(',')}`);
   const { rows: [b] } = await run('SELECT MIN(id) AS lo, MAX(id) AS hi FROM jobs');
   let from = Number(b.lo) - 1;
   const hi = Number(b.hi);
@@ -80,7 +92,8 @@ async function main() {
     const { rows } = await run(
       `SELECT id, ats, title, location, description FROM jobs
         WHERE id > ${from} AND id <= ${to} AND removed_at IS NULL AND is_remote = true
-          AND description IS NOT NULL AND description <> 'N/A'`);
+          AND ats = ANY($1::text[]) AND left(external_id, length(ats) + 1) = ats || '_'
+          AND description IS NOT NULL AND description <> 'N/A'`, [ATS]);
     scanned += rows.length;
     const ids = [], wts = [];
     for (const row of rows) {

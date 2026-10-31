@@ -13,6 +13,7 @@ const logger = require('../logger');
 const { countriesFromLocation, locationTokens } = require('./location-countries');
 const { remoteRegionCountries } = require('./remote-regions');
 const { normalizeEmploymentType } = require('./extract');
+const { withoutNordicIntern } = require('./nordic-intern');
 
 const HOST = process.env.MEILI_HOST || '';
 const KEY = process.env.MEILI_MASTER_KEY || '';
@@ -145,13 +146,14 @@ async function stats() {
  * Title only: the experience_level classifier also reads the description, and a description
  * that mentions "our intern program" does not make the job an internship. "Co-op" is left out
  * on purpose, it is also a retailer ("Co-op Store Manager"), and so is the staff that runs an
- * intern program ("Internship Program Coordinator", "Intern Recruiter").
+ * intern program ("Internship Program Coordinator", "Intern Recruiter"). Nor is a Nordic or Dutch
+ * "intern", which means internal ("Intern revisor"): see nordic-intern.js.
  */
 const INTERNSHIP_TITLE =
   /\bintern(?:ship)?s?\b(?!\s+(?:program(?:me)?s?|coordinator|recruit\w*|manager|lead|specialist|director|advisor|liaison)\b)|\bstagiaire\b|\bpracticante\b/i;
 
 function indexEmploymentType(row) {
-  if (INTERNSHIP_TITLE.test(row.title || '')) return 'Internship';
+  if (INTERNSHIP_TITLE.test(withoutNordicIntern(row.title))) return 'Internship';
   return normalizeEmploymentType(row.employment_type) || row.employment_type || null;
 }
 
