@@ -3,6 +3,37 @@
  * Extracts salary, workplace type, and employment type from free text.
  */
 
+// Money that is not the job's pay. The first figure in a posting used to be stored as its salary,
+// whatever it was. Supply loop, 2026-10-31: Wisetack's "base salary ... is $100,000 plus deal
+// issuance commission anticipated between $25,000 - $70,000" was stored as $25,000-$70,000 and
+// refused against an $85,000 floor; Sentara's "Adoption, Fertility and Surrogacy Reimbursement up
+// to $10,000" is the $10,000 "salary" on 3-29% of Sentara rows, a CFO's included; BT's "allowance
+// of £5k per annum" went in as £5,000 a month. Same reading as boardPayIsOtherMoney in the backend.
+const NOT_PAY = /\b(?:bonus(?:es)?|commissions?|sign(?:ing|[\s-]on)|stipend|allowance|tuition|reimburs\w*|relocation|referral|revenue|budget|funding|raised|valuation|quota|equity|401\(?k\)?|deposit|fees?)\b/i;
+const IS_PAY = /\b(?:salary|salaries|pay|compensation|wages?|earnings|ote|remuneration|hourly|base)\b/i;
+const STUDENT_DEBT = /\b(?:student\s+(?:debt|loans?)|debt)\b(?:\s+pay\s*down)?/gi;
+const OTHER_MONEY_REACH = 200;
+const SENTENCE_START = /(?:[.!?]\s+(?=[A-Z])|\n|•)/g;
+const MONEY_FIGURE = /(?:[$£€]|[AC]\$)\s*\d[\d,]*(?:\.\d+)?\s*[kK]?/g;
+
+/**
+ * Whether a matched figure is other money. Only what stands between it and the money or sentence
+ * before it counts, so "$120,000 - $150,000 + bonus" and "compensation, including sales
+ * incentives, is $125,100" are pay, as is a pay word just after it ("... in total cash compensation").
+ */
+function isOtherMoney(text, match) {
+  const at = text.slice(match.index).search(/[$£€\d]|[AC]\$/) + match.index;
+  const head = text.slice(Math.max(0, at - OTHER_MONEY_REACH), at);
+  let from = 0;
+  for (const m of head.matchAll(SENTENCE_START)) from = m.index + m[0].length;
+  for (const m of head.matchAll(MONEY_FIGURE)) from = Math.max(from, m.index + m[0].length);
+  const raw = head.slice(from);
+  const before = raw.replace(STUDENT_DEBT, ' ');
+  const tail = text.slice(match.index + match[0].length).split(/[.!?]\s|\n|•/, 1)[0].slice(0, 60);
+  if (IS_PAY.test(before) || IS_PAY.test(tail)) return false;
+  return before !== raw || NOT_PAY.test(before);
+}
+
 /**
  * Extract salary information from job description text.
  * Returns { min, max, currency, interval } or null.
@@ -19,7 +50,10 @@ function extractSalary(rawText) {
   // Greenhouse's pay block keeps its dash as an entity between spans:
   // "$110,000&mdash;$115,000 USD" after stripHtml. Read as no range, so the row had
   // no pay (2026-10-31: 7 of 9 applied rows with that block).
-  const text = String(rawText).replace(/&[mn]dash;/g, '-').replace(/<[^>]+>/g, '');
+  const text = String(rawText)
+    .replace(/&[mn]dash;/g, '-')
+    .replace(/<\/?(?:li|p|br|div|ul|ol|h[1-6]|tr)\b[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
 
   const currencyMap = {
     '$': 'USD', '£': 'GBP', '€': 'EUR', 'A$': 'AUD', 'C$': 'CAD',
@@ -57,6 +91,14 @@ function extractSalary(rawText) {
     return min >= 10000 && max >= min; // yearly
   }
 
+  // The first match that is pay, passing over money that is something else (isOtherMoney).
+  function firstPay(re) {
+    for (const m of text.matchAll(new RegExp(re.source, `${re.flags}g`))) {
+      if (!isOtherMoney(text, m)) return m;
+    }
+    return null;
+  }
+
   // ── Pattern 1: Oracle Cloud format "Minimum Salary: 53,000 USD Maximum Salary: 80,000 USD" ──
   const oracleMatch = text.match(
     /[Mm]inim(?:um)?\s*[Ss]alary\s*[:=]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(USD|GBP|EUR|[A-Z]{3})?\s*(?:[-–—]|[Mm]axim(?:um)?\s*[Ss]alary\s*[:=]?\s*)(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(USD|GBP|EUR|[A-Z]{3})?/
@@ -71,7 +113,7 @@ function extractSalary(rawText) {
   }
 
   // ── Pattern 2: Currency symbol ranges $120,000 - $180,000 ──
-  const symbolRangeMatch = text.match(
+  const symbolRangeMatch = firstPay(
     /([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?\s*(?:USD|CAD|AUD|GBP|EUR)?\s*(?:[-–—]|to)\s*(?:[$£€]|[AC]\$)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/
   );
   if (symbolRangeMatch) {
@@ -87,7 +129,7 @@ function extractSalary(rawText) {
   }
 
   // ── Pattern 3: Code-prefixed ranges 120,000 USD - 180,000 USD ──
-  const codeRangeMatch = text.match(
+  const codeRangeMatch = firstPay(
     /(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*([kK])?\s*(USD|GBP|EUR|AUD|CAD|CHF|SGD|INR|JPY|CNY|BRL|MXN|ZAR)\s*(?:[-–—]|to)\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*([kK])?\s*(?:USD|GBP|EUR|AUD|CAD|CHF|SGD|INR|JPY|CNY|BRL|MXN|ZAR)?/
   );
   if (codeRangeMatch) {
@@ -103,7 +145,7 @@ function extractSalary(rawText) {
   }
 
   // ── Pattern 4: Single salary with context "$85,000" or "salary of $120,000" ──
-  const singleMatch = text.match(
+  const singleMatch = firstPay(
     /(?:salary|compensation|pay|base|total\s*comp|starting\s*at|up\s*to|earning)\s*(?:range\s*)?(?:of\s*|is\s*|:\s*|=\s*)?([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/i
   );
   if (singleMatch) {
@@ -117,7 +159,7 @@ function extractSalary(rawText) {
   }
 
   // ── Pattern 5: Single amount with currency code "53,000 USD" near salary context ──
-  const singleCodeMatch = text.match(
+  const singleCodeMatch = firstPay(
     /(?:salary|compensation|pay|base|earn)\s*(?:range\s*)?(?:of\s*|is\s*|:\s*|=\s*)?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*([kK])?\s*(USD|GBP|EUR|AUD|CAD|CHF|SGD|INR)/i
   );
   if (singleCodeMatch) {
@@ -130,7 +172,7 @@ function extractSalary(rawText) {
   }
 
   // ── Pattern 6: Pay range label "Pay Range: $22 - $28" ──
-  const payRangeMatch = text.match(
+  const payRangeMatch = firstPay(
     /(?:pay\s*range|hourly\s*rate|rate)\s*[:=]?\s*([$£€])\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*[-–—to]+\s*(?:[$£€])?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/i
   );
   if (payRangeMatch) {
@@ -371,4 +413,4 @@ function normalizeEmploymentType(raw) {
   return null; // unrecognised free text is dropped rather than shown as a filter option
 }
 
-module.exports = { extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES };
+module.exports = { isOtherMoney, extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES };
