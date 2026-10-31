@@ -166,3 +166,9 @@ test('isSandboxPosting / isSandboxSlug agree with sandboxMatch / sandboxSlugRule
   assert.equal(isSandboxPosting({ ats: 'lever', slug: 'leverdemo-8' }), true);
   assert.equal(isSandboxPosting({ ats: 'lever', slug: 'netflix' }), false);
 });
+
+test('Rippling demo tenants are one family, whatever their uuid', () => {
+  assert.equal(sandboxSlugRule('dunder-mifflin0e41a933-d8b8-4f29-856e-fd54380549e3'), 'family:rippling-demo');
+  assert.equal(sandboxSlugRule('Dunder-Mifflin50317daf-bf46-4119-a983-c418321babdc64b6d522e654ea8f9c154f84'), 'family:rippling-demo');
+  assert.equal(sandboxSlugRule('dunder-mifflin-paper'), null);
+});
