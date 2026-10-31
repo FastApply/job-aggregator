@@ -152,3 +152,47 @@ test('kula: a closed account is permanent', async (t) => {
   t.mock.method(global, 'fetch', async () => new Response('{}', { status: 403 }));
   await assert.rejects(kula.fetchJobs('closed'), (e) => permanent.test(e.message));
 });
+
+// Live answers 2026-10-31: an unknown cid gets openresty's page every time; a known cid sometimes
+// lands on a cluster that does not host it and gets the ingress's "default backend - 404".
+const OPENRESTY_404 = '<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>openresty</center>\r\n</body>\r\n</html>\r\n';
+const MISROUTED_404 = 'default backend - 404';
+
+function stubFetch(answers) {
+  const real = global.fetch;
+  let n = 0;
+  global.fetch = async () => {
+    const [status, body] = answers[Math.min(n++, answers.length - 1)];
+    return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
+  };
+  return { calls: () => n, restore: () => { global.fetch = real; } };
+}
+
+test('adp workforce now: a misrouted 404 is retried, not read as a closed career center', async () => {
+  const cid = '69abe2ed-59b3-4ab3-bd4a-b2c8fc054e18';
+  assert.ok(wfn.isMisrouted(MISROUTED_404));
+  assert.ok(!wfn.isMisrouted(OPENRESTY_404));
+  const s = stubFetch([[404, MISROUTED_404], [200, { meta: { totalNumber: 1 }, jobRequisitions: [{ itemID: '1_1', requisitionTitle: 'Nurse' }] }]]);
+  try {
+    const { jobs } = await wfn.fetchJobs(cid);
+    assert.equal(jobs.length, 1);
+    assert.equal(s.calls(), 2);
+  } finally { s.restore(); }
+});
+
+test('adp workforce now: only openresty\'s 404 is permanent', async () => {
+  const cid = '69abe2ed-59b3-4ab3-bd4a-b2c8fc054e18';
+  const s = stubFetch([[404, OPENRESTY_404]]);
+  try {
+    await assert.rejects(wfn.fetchJobs(cid), (e) => permanent.test(e.message));
+  } finally { s.restore(); }
+});
+
+test('adp workforce now: a missing or empty posting is SKIP, a real one returns its HTML', async () => {
+  const raw = { cid: '69abe2ed-59b3-4ab3-bd4a-b2c8fc054e18', itemID: '1_1' };
+  let s = stubFetch([[200, { postingInstructions: [], links: [] }]]);
+  try { assert.equal(await wfn.fetchDescription('u', raw), 'SKIP'); } finally { s.restore(); }
+  s = stubFetch([[200, { itemID: '1_1', requisitionDescription: '<p>Care for patients on a 30-bed unit.</p>' }]]);
+  try { assert.equal(await wfn.fetchDescription('u', raw), '<p>Care for patients on a 30-bed unit.</p>'); } finally { s.restore(); }
+  assert.equal(await wfn.fetchDescription('u', {}), 'SKIP');
+});

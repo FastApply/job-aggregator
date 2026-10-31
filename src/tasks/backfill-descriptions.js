@@ -37,10 +37,13 @@ const ATS_CONFIG = {
   eightfold:       { batchSize: 40, concurrency: 2 },
   avature:         { batchSize: 30, concurrency: 1 },
   // The crawl stores only a teaser (UKG) or no text (Workforce Now, SilkRoad); one request a
-  // posting fills it. Each adapter paces its own requests.
-  ukg:              { batchSize: 40, concurrency: 2 },
-  adp_workforcenow: { batchSize: 40, concurrency: 2 },
-  silkroad:         { batchSize: 40, concurrency: 2 },
+  // posting fills it. Each adapter paces its own requests, so concurrency only overlaps waiting
+  // (a UKG page takes 3-25 s). `ownLoop`: the worker drains these in a loop of their own
+  // (scripts/render-worker.js) — at 40 rows per ~10-minute shared cycle, the 98k rows they lacked
+  // on 2026-10-31 would have taken about ten days.
+  ukg:              { batchSize: 60, concurrency: 6, ownLoop: true },
+  adp_workforcenow: { batchSize: 60, concurrency: 3, ownLoop: true },
+  silkroad:         { batchSize: 40, concurrency: 2, ownLoop: true },
   // Simplify pages are ~44KB gzipped and this platform has 1.7M rows to fill, so it is the one
   // that runs longest. Concurrency stays modest deliberately: the work is a courtesy scrape of
   // someone else's site, and measured throughput was already ~40 pages/min at 4.
@@ -1204,14 +1207,15 @@ async function backfillForAts(ats, batchSize, concurrency) {
   // picking up rows that failed earlier and anything new below the cursor.
   descCursor.set(ats, jobs.length < batchSize ? 0 : jobs[jobs.length - 1].id);
 
-  if (jobs.length === 0) return { filled: 0, failed: 0 };
+  if (jobs.length === 0) return { filled: 0, failed: 0, na: 0, selected: 0 };
 
   const results = await runWithConcurrency(jobs, concurrency, (job) => processJob(job, ats));
 
   const filled = results.filter(r => r === 'filled').length;
   const failed = results.filter(r => r === 'failed').length;
+  const na = results.filter(r => r === 'skipped').length;
 
-  return { filled, failed };
+  return { filled, failed, na, selected: jobs.length };
 }
 
 async function backfillDescriptions() {

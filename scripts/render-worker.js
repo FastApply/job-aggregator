@@ -85,6 +85,7 @@ async function runDescBackfill() {
       // capped for the same reason. Slower per cycle, but it loops every 5m and re-drains.
       let filled = 0;
       for (const [ats, cfg] of Object.entries(ATS_CONFIG)) {
+        if (cfg.ownLoop) continue; // drained by runOwnDescLoop
         try {
           const r = await backfillForAts(ats, Math.min(cfg.batchSize, 40), Math.min(cfg.concurrency, 3));
           filled += r.filled;
@@ -95,6 +96,18 @@ async function runDescBackfill() {
     finally { descRunning = false; }
   }
   setTimeout(runDescBackfill, 5 * 60 * 1000);
+}
+// Platforms whose crawl stores no text drain in a loop each, back to back while rows remain:
+// the shared cycle above gives a platform 40 rows every ~10 minutes. The adapter's own pacing
+// sets the request rate. An empty or all-failed batch waits 10 minutes before the next.
+async function runOwnDescLoop(ats, cfg) {
+  let wait = 10 * 60 * 1000;
+  try {
+    const r = await backfillForAts(ats, cfg.batchSize, cfg.concurrency);
+    if (r.selected) logger.info({ ats, ...r }, 'desc backfill (own loop) batch');
+    if (r.filled + (r.na || 0) > 0) wait = 2000;
+  } catch (e) { logger.warn({ ats, err: e.message }, 'desc backfill (own loop) error'); }
+  setTimeout(() => runOwnDescLoop(ats, cfg), wait);
 }
 async function runClassify() {
   try { await backfillClassifications(); } catch (e) { logger.error({ err: e.message }, 'classification backfill error'); }
@@ -266,6 +279,9 @@ process.on('unhandledRejection', (err) => logger.error({ err: err?.message }, 'u
 logger.info({ crawlAts: CRAWL_ATS }, 'render-worker starting — crawl 4 sync-only platforms + maintenance + demand-crawl (no Redis)');
 startCrawler();
 setTimeout(runDescBackfill, 5 * 60 * 1000);
+for (const [ats, cfg] of Object.entries(ATS_CONFIG)) {
+  if (cfg.ownLoop) setTimeout(() => runOwnDescLoop(ats, cfg), 6 * 60 * 1000);
+}
 setTimeout(runClassify, 2 * 60 * 1000);
 setTimeout(runStaleCleanup, 5 * 60 * 1000);
 async function runSearchCanaryLoop() {

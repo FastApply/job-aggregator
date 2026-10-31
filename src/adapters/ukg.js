@@ -359,9 +359,15 @@ async function fetchJobs(rawSlug, opts = {}) {
 }
 
 /** The posting's full HTML description from its own page, or null. */
+/** The posting's text for backfill-descriptions, or 'SKIP' when the posting is gone. A passing fault throws. */
 async function fetchDescription(url) {
-  const { description } = await fetchPosting(url);
-  return description;
+  try {
+    const { description } = await fetchPosting(url);
+    return description;
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) return 'SKIP';
+    throw e;
+  }
 }
 
 // The posting JSON is followed by `);` and more script, so read exactly one JSON value.
