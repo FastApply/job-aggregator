@@ -16,6 +16,19 @@ function parseComp(s) {
   return { salary_min: String(nums[0]), salary_max: nums.length > 1 ? String(nums[1]) : null, salary_currency: currency, salary_interval: interval };
 }
 
+// A posting's place. `location` is the office; a role with no office (locationType "1")
+// leaves it empty and names the place only in `atsLocation`. Reading the first alone lost
+// the place on 10,261 live rows, and the empty ones then read as open worldwide: swaarm's
+// Kuala Lumpur sales role went to a candidate in Romania (2026-10-31).
+function locationOf(detail, listing) {
+  const office = detail?.location || listing?.location || {};
+  const parts = [office.city, office.state, office.addressCountry].filter(Boolean);
+  if (parts.length) return parts.join(', ');
+  const ats = detail?.atsLocation || listing?.atsLocation || {};
+  const named = [ats.city, ats.state || ats.province, ats.country].filter(Boolean);
+  return named.filter((part, i) => part !== named[i - 1]).join(', ') || null;
+}
+
 async function fetchJobDetail(company, jobId) {
   try {
     const res = await fetch(
@@ -55,11 +68,6 @@ async function fetchJobs(clientname) {
       const listing = batch[k];
       const detail = details[k];
 
-      // Use detail location (has country/postalCode) with fallback to listing
-      const loc = detail?.location || listing.location || {};
-      const locationParts = [loc.city, loc.state, loc.addressCountry].filter(Boolean);
-      const locationStr = locationParts.join(', ') || null;
-
       // Determine workplace type from locationType, isRemote flag, or department name
       const locType = detail?.locationType || listing.locationType;
       const isRemote = listing.isRemote
@@ -78,7 +86,7 @@ async function fetchJobs(clientname) {
         external_id: `bamboohr_${listing.id}`,
         title: listing.jobOpeningName,
         department: listing.departmentLabel || null,
-        location: locationStr,
+        location: locationOf(detail, listing),
         workplace_type: workplaceType,
         employment_type: employmentType,
         // BambooHR gives compensation as free text (e.g. "$17.00+", "$90k-$120k/year").
@@ -94,4 +102,4 @@ async function fetchJobs(clientname) {
   return { jobs, meta: { companyName: null } };
 }
 
-module.exports = { fetchJobs };
+module.exports = { fetchJobs, locationOf };
