@@ -68,7 +68,7 @@ function extractSalary(text) {
 
   // ── Pattern 2: Currency symbol ranges $120,000 - $180,000 ──
   const symbolRangeMatch = text.match(
-    /([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?\s*(?:[-–—]|to)\s*(?:[$£€]|[AC]\$)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/
+    /([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?\s*(?:USD|CAD|AUD|GBP|EUR)?\s*(?:[-–—]|to)\s*(?:[$£€]|[AC]\$)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/
   );
   if (symbolRangeMatch) {
     const currency = currencyMap[symbolRangeMatch[1]] || 'USD';
@@ -193,6 +193,18 @@ const HYBRID_INTL = new RegExp([
 // one-word spelling only: the English "home office" is usually a headquarters (see above).
 const HOME_WORK_INTL = /\bhomeoffice\b|\bhome-office\b(?=.{0,30}\b(?:möglich|tage?|anteil|regelung|option)\b)|\bmobil(?:es|em)?\s+arbeiten\b|\btélétravail\b|\bteletravail\b|\bteletrabajo\b|\bthuiswerk(?:en)?\b|\blavoro da remoto\b/i;
 
+// A weekday, spelled out or short, or "F" as in "M-Th on site, F - WFH".
+const WEEK_DAY = '(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:day)?|f';
+// Named days in the office: part of the week, so hybrid whatever else the text says. Applied
+// 2026-10-30 for candidates who work remotely only, each tagged remote on the word WFH: Ketryx's
+// "Monday, Tuesday, Thursday, Friday in office, Wednesday WFH option" and Performix's "M-Th on
+// site, F - WFH". Not Monday to Friday: that is the whole week.
+const OFFICE_DAY = '(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:day)?\\.?';
+const OFFICE_DAYS = new RegExp(
+  `\\b(?:${OFFICE_DAY}(?:\\s*(?:,\\s*and|,|/|&|and)\\s*${OFFICE_DAY}){1,3}` +
+  `|(?!mon(?:day)?\\.?\\s*(?:-|–|—|to|through|thru)\\s*fri)${OFFICE_DAY}\\s*(?:-|–|—|to|through|thru)\\s*${OFFICE_DAY}` +
+  `|m\\s*\\\\?[-–—]\\s*th)\\s*[:(]?\\s*(?:in[\\s-]?(?:the\\s+|our\\s+)?office|on[\\s-]?site|in[\\s-]?person)\\b`, 'i');
+
 // Remote as the way THIS job is worked, read from a description. The bare word is no evidence:
 // rows the ATS gives no work model for are tagged here, and a remote-only candidate's search is
 // is_remote and nothing else, while the match verdict refuses only a mode the posting STATES, so
@@ -209,7 +221,9 @@ const REMOTE_STATEMENT = new RegExp([
   // fully remote / 100% remote, unless what follows shows it is about other jobs.
   '\\b(?:fully|100\\s?%|completely|entirely|permanently|exclusively|totally)[\\s-]+remote(?:ly)?\\b(?!\\s+(?:positions|roles|jobs|employees|workers|staff|status)\\b)',
   '\\bremote\\s+(?:working\\s+)?(?:position|role|job|opportunity|assignment|contract|employee|worker|based)\\b(?!\\s+sites?\\b)',
-  '\\bremote[\\s-](?:first|only)\\b', '\\ball[\\s-]remote\\b', '#li-remote\\b', '\\bwork\\s+from\\s+anywhere\\b', '\\bwfh\\b',
+  '\\bremote[\\s-](?:first|only)\\b', '\\ball[\\s-]remote\\b', '#li-remote\\b', '\\bwork\\s+from\\s+anywhere\\b',
+  // WFH on its own, not one day of the week ("Wednesday WFH option", "F - WFH").
+  `(?<!(?:${WEEK_DAY})\\s*(?:[-–—:]\\s*)?)\\bwfh\\b(?!\\s+(?:option|day|days|flex\\w*|policy|allowance|stipend))`,
   // "work remotely", "can work fully remote", "working from home". Not "work with remote teams",
   // a stipend for it, or a few days of it ("work remotely up to 2 days a week").
   '\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))',
@@ -231,7 +245,7 @@ const REMOTE_STATEMENT = new RegExp([
 
 function statesRemote(title, description) {
   const text = String(description || '').replace(/\s+/g, ' ');
-  if (!text || NOT_REMOTE_EN.test(text)) return false;
+  if (!text || NOT_REMOTE_EN.test(text) || OFFICE_DAYS.test(text)) return false;
   if (REMOTE_STATEMENT.test(text)) return true;
   // "Ajaia is hiring a remote Product Manager": the word against the job's own title.
   const name = String(title || '').trim().toLowerCase();
@@ -264,7 +278,7 @@ function extractWorkplaceType(title, location, description) {
     if (HYBRID_INTL.test(fields)) return 'hybrid';
     return 'remote';
   }
-  if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || HYBRID_INTL.test(fields)) return 'hybrid';
+  if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || HYBRID_INTL.test(fields) || OFFICE_DAYS.test(fields)) return 'hybrid';
   if (HOME_WORK_INTL.test(fields)) return 'hybrid';
   if (/\bon-site\b|\bonsite\b|\bin-office\b|\bin office\b|\bon site\b/.test(fields)) return 'onsite';
 

@@ -50,6 +50,13 @@ const ALLOWED_BOARDS = new Set([
   'kleentestproducts',
 ]);
 
+// A family of demo tenants a name rule cannot see: Rippling mints one per customer account, each
+// `dunder-mifflin<uuid>`, with a body left at its template ("Describe the role and team the
+// candidate will be joining"). 34 submissions by 18 candidates into ten such boards, read
+// 2026-10-31. Keep it in step with KNOWN_SANDBOX_BOARD_FAMILIES in
+// fastapply-backend/src/modules/automations/sandbox-job-board.util.ts.
+const SANDBOX_FAMILIES = [/^dunder-mifflin[0-9a-f]{8}-/i];
+
 // Direct-employer adapters: ats_slug is a shard selector, not a tenant id, so the name says
 // nothing about the board. Their URLs are checked, their slugs are not.
 const SHARD_SLUG_ATS = new Set(['amazon', 'netflix', 'google']);
@@ -65,6 +72,7 @@ function sandboxSlugRule(slug, { allow = ALLOWED_BOARDS } = {}) {
   const raw = String(slug || '').trim();
   if (!raw) return null;
   if (allow.has(compact(raw))) return null;
+  if (SANDBOX_FAMILIES.some((re) => re.test(raw))) return 'family:rippling-demo';
 
   // Words are split on anything that is not a letter or digit and lower-cased, with a trailing
   // number dropped: `leverdemo-8` -> [leverdemo], `RhaegalSandbox` -> [rhaegalsandbox].
