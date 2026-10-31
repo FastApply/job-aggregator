@@ -14,8 +14,12 @@
  *  - Oracle format: Minimum Salary: 53,000 USD Maximum Salary: 80,000 USD
  *  - K suffix: $75K - $95K
  */
-function extractSalary(text) {
-  if (!text) return null;
+function extractSalary(rawText) {
+  if (!rawText) return null;
+  // Greenhouse's pay block keeps its dash as an entity between spans:
+  // "$110,000&mdash;$115,000 USD" after stripHtml. Read as no range, so the row had
+  // no pay (2026-10-31: 7 of 9 applied rows with that block).
+  const text = String(rawText).replace(/&[mn]dash;/g, '-').replace(/<[^>]+>/g, '');
 
   const currencyMap = {
     '$': 'USD', '£': 'GBP', '€': 'EUR', 'A$': 'AUD', 'C$': 'CAD',
