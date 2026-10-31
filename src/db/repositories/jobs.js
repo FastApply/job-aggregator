@@ -2,6 +2,7 @@ const { query, transaction, isPostgres } = require('../connection');
 const logger = require('../../logger');
 const { aliasGroup, isShortAlias } = require('../../utils/location-aliases');
 const { annualiseSalary } = require('../../utils/salary');
+const sandboxGuard = require('../../utils/sandbox-guard');
 
 // A job missing from this many CONSECUTIVE successful syncs of its company is retired (see the
 // absence block at the end of syncForCompany).
@@ -278,9 +279,31 @@ const jobsRepo = {
     return rows[0] || null;
   },
 
-  async syncForCompany(companyId, ats, incomingJobs, { partial = false } = {}) {
+  async syncForCompany(companyId, ats, incomingJobs, { partial = false, company = null } = {}) {
     let added = 0;
     let updated = 0;
+
+    // FA-053, ported from main: an ATS demo board is not an employer, so its postings are never
+    // stored. Every crawler and feed comes through here. A board dropped in full leaves
+    // incomingJobs empty, which the absence counter treats as "the adapter returned nothing", so
+    // stored rows stay until a person runs retire:sandbox. `company` is optional: a crawler that
+    // already holds the row hands it in. The lookup must not be able to fail a sync: a failed read
+    // just means a URL-only check. SANDBOX_REJECT=off skips all of it.
+    let rejected = 0;
+    if (sandboxGuard.sandboxMode() !== 'off') {
+      let board = company;
+      if (!board) {
+        board = (await query('SELECT ats_slug, career_url FROM companies WHERE id = ?', [companyId])
+          .catch(() => ({ rows: [] }))).rows[0];
+      }
+      const guarded = sandboxGuard.filterPostings(
+        incomingJobs,
+        { ats, slug: board && board.ats_slug, careerUrl: board && board.career_url },
+        { source: 'syncForCompany' }
+      );
+      incomingJobs = guarded.kept;
+      rejected = guarded.rejected.length;
+    }
 
     // NOTE: posting age is a query-time concern (the API/UI filters by posted_at),
     // NOT an ingest-time one. We used to drop >30-day-old postings from the incoming
@@ -487,8 +510,8 @@ const jobsRepo = {
       }
     }
 
-    logger.info({ companyId, added, updated, removed, countable }, 'Job sync diff complete');
-    return { added, updated, removed };
+    logger.info({ companyId, added, updated, removed, rejected, countable }, 'Job sync diff complete');
+    return { added, updated, removed, rejected };
   },
 };
 

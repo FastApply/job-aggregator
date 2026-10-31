@@ -134,6 +134,8 @@ async function crawlCompany(co) {
   // knowingly-truncated response as "these jobs are gone".
   const diff = await jobsRepo.syncForCompany(co.id, co.ats, incoming, {
     partial: result && result.meta ? result.meta.capped === true : false,
+    // Already in hand from the claim: lets the sandbox guard skip its own lookup of the company.
+    company: { ats_slug: co.ats_slug, career_url: co.career_url },
   });
   // syncForCompany doesn't bump last_synced_at; we already did at claim time.
   return { jobs: incoming.length, added: diff.added };
