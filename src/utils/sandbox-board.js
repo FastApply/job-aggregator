@@ -59,8 +59,9 @@ const SANDBOX_FAMILIES = [/^dunder-mifflin[0-9a-f]{8}-/i];
 
 // Demo tenants read by hand whose name the rule cannot see. Personio's "demorecruiting": page title
 // "Jobs at Demo Recruiting", "Emotional Latency Engineer" among 29 accounting positions, read
-// 2026-10-31. Keep it in step with KNOWN_SANDBOX_BOARDS in sandbox-job-board.util.ts.
-const KNOWN_SANDBOX_SLUGS = new Set(['demorecruiting']);
+// 2026-10-31. JazzHR's "cmsprep": 669 live rows titled "[TEST] foobukachoo", "[TEST] Nate's Test
+// Job #2", read 2026-10-31. Keep it in step with KNOWN_SANDBOX_BOARDS in sandbox-job-board.util.ts.
+const KNOWN_SANDBOX_SLUGS = new Set(['demorecruiting', 'cmsprep']);
 
 // Direct-employer adapters: ats_slug is a shard selector, not a tenant id, so the name says
 // nothing about the board. Their URLs are checked, their slugs are not.

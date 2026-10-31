@@ -175,5 +175,6 @@ test('Rippling demo tenants are one family, whatever their uuid', () => {
 
 test('a demo tenant read by hand is a sandbox; a real name starting with demo is not', () => {
   assert.equal(sandboxSlugRule('demorecruiting'), 'known:demo');
+  assert.equal(sandboxSlugRule('cmsprep'), 'known:demo');
   assert.equal(sandboxSlugRule('demodesk-gmbh'), null);
 });
