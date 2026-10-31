@@ -118,8 +118,15 @@ async function fetchJobs(rawSlug) {
 }
 
 /** The posting's HTML description from its JSON-LD JobPosting, or null. */
+/** The posting's JSON-LD description for backfill-descriptions, or 'SKIP' when the posting is gone. */
 async function fetchDescription(url) {
-  const html = await getHtml(url);
+  let html;
+  try {
+    html = await getHtml(url);
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) return 'SKIP';
+    throw e;
+  }
   for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
     try {
       const d = JSON.parse(m[1]);

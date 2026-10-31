@@ -8,7 +8,13 @@
 //     -> {meta.totalNumber, jobRequisitions[]}: itemID, requisitionTitle, requisitionLocations[],
 //        workLevelCode.shortName, postDate, customFieldGroup.stringFields[ExternalJobID]. No description.
 //   GET .../job-requisitions/{itemID}?cid={cid}&lang=en_US -> the same plus requisitionDescription (HTML).
-// Unknown cid -> 404. The posting URL carries jobId={ExternalJobID}, which is what FastApply's
+// Unknown cid -> 404 from openresty ("<title>404 Not Found</title>"), every time.
+// A known cid can ALSO answer 404, with the body "default backend - 404": the front end routes
+// some requests to a cluster that does not host that client (probed 2026-10-31: four retired cids
+// flapped 200/404 about half the time, three steady ones never did, a made-up cid never got 200).
+// Treating that as "board gone" retired 544 live career centers, so it is retried and, if it
+// persists, reported as passing. An unknown itemID answers 200 with no requisitionDescription.
+// The posting URL carries jobId={ExternalJobID}, which is what FastApply's
 // Workforce Now apply adapter reads (verified there against Infinite Campus and ORBCOMM, 2026-10-28).
 // Descriptions are filled by backfill-descriptions through fetchDescription (one request a posting).
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0 Safari/537.36';
@@ -18,6 +24,9 @@ const PAGE = 50;
 const MAX_PAGES = 100;
 const MIN_GAP_MS = Number(process.env.ADP_WFN_GAP_MS || 500);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// A misrouted request lands on a good cluster about half the time, so 8 tries miss ~1 in 250.
+const MISROUTE_TRIES = 8;
+const isMisrouted = (body) => /default backend/i.test(body || '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let nextAt = 0;
@@ -43,7 +52,12 @@ async function getJson(url) {
     } catch (e) {
       throw new Error(`ADP Workforce Now network error (retry): ${e.message}`);
     }
-    if (res.status === 404) throw new Error('ADP Workforce Now HTTP 404 (not found)');
+    if (res.status === 404) {
+      const body = await res.text().catch(() => '');
+      if (!isMisrouted(body)) throw new Error('ADP Workforce Now HTTP 404 (not found)');
+      if (attempt < MISROUTE_TRIES) { await sleep(1000 + Math.random() * 1000); continue; }
+      throw new Error(`ADP Workforce Now misrouted ${MISROUTE_TRIES} times in a row (retry)`);
+    }
     if ((res.status === 429 || res.status >= 500) && attempt < 3) { await sleep(5000 * attempt); continue; }
     if (!res.ok) throw new Error(`ADP Workforce Now HTTP ${res.status} (retry)`);
     return res.json();
@@ -115,15 +129,25 @@ async function fetchJobs(rawSlug) {
   return { jobs, meta: { capped } };
 }
 
-/** The posting's HTML description from the detail endpoint, or null. */
+/**
+ * The posting's HTML description from the detail endpoint, or 'SKIP' when the posting is gone
+ * (200 with no itemID), carries no text, or its career center no longer exists. A passing fault throws.
+ */
 async function fetchDescription(url, rawData) {
   const raw = typeof rawData === 'string' ? JSON.parse(rawData) : rawData || {};
   const cid = raw.cid || (String(url).match(/[?&]cid=([0-9a-f-]{36})/i) || [])[1];
-  if (!cid || !raw.itemID) return null;
-  const d = await getJson(`${API}/${encodeURIComponent(raw.itemID)}?cid=${cid}&lang=en_US&locale=en_US`);
-  return d.requisitionDescription || null;
+  if (!cid || !raw.itemID) return 'SKIP';
+  let d;
+  try {
+    d = await getJson(`${API}/${encodeURIComponent(raw.itemID)}?cid=${cid}&lang=en_US&locale=en_US`);
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) return 'SKIP';
+    throw e;
+  }
+  const text = String(d.requisitionDescription || '').replace(/<[^>]+>/g, '').trim();
+  return text.length >= 20 ? d.requisitionDescription : 'SKIP';
 }
 
 const fetchTimeoutMs = 15 * 60 * 1000;
 
-module.exports = { fetchJobs, fetchDescription, toJob, locationOf, cidOf, fetchTimeoutMs };
+module.exports = { fetchJobs, fetchDescription, toJob, locationOf, cidOf, isMisrouted, fetchTimeoutMs };
