@@ -662,7 +662,7 @@ const jobsRepo = {
           ON CONFLICT(external_id, company_id) DO UPDATE SET
             title = EXCLUDED.title,
             department = EXCLUDED.department,
-            location = EXCLUDED.location,
+            location = COALESCE(EXCLUDED.location, jobs.location),
             -- COALESCE for the same reason as salary below: Workday, Personio and SmartRecruiters
             -- list responses carry no description, so their crawl sends NULL here every sync and
             -- would erase the tag backfill-descriptions read from the description afterwards.
