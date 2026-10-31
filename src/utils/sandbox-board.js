@@ -55,7 +55,13 @@ const ALLOWED_BOARDS = new Set([
 // candidate will be joining"). 34 submissions by 18 candidates into ten such boards, read
 // 2026-10-31. Keep it in step with KNOWN_SANDBOX_BOARD_FAMILIES in
 // fastapply-backend/src/modules/automations/sandbox-job-board.util.ts.
-const SANDBOX_FAMILIES = [/^dunder-mifflin[0-9a-f]{8}-/i];
+// Teamtailor's `sandbox<name>-<epoch>`: "sandbox" is a prefix, which the name rule leaves alone for
+// the real `sandboxinteractive`, and the number hides the end of the word. Page titles "Sandbox:
+// Nytlaegejob" and "Sandbox: SaurTest JTMO", 19 live rows, read 2026-11-01.
+const SANDBOX_FAMILIES = [
+  [/^dunder-mifflin[0-9a-f]{8}-/i, 'family:rippling-demo'],
+  [/^sandbox[a-z0-9]+-\d{9,}$/i, 'family:teamtailor-demo'],
+];
 
 // Demo tenants read by hand whose name the rule cannot see. Personio's "demorecruiting": page title
 // "Jobs at Demo Recruiting", "Emotional Latency Engineer" among 29 accounting positions, read
@@ -78,7 +84,8 @@ function sandboxSlugRule(slug, { allow = ALLOWED_BOARDS } = {}) {
   const raw = String(slug || '').trim();
   if (!raw) return null;
   if (allow.has(compact(raw))) return null;
-  if (SANDBOX_FAMILIES.some((re) => re.test(raw))) return 'family:rippling-demo';
+  const family = SANDBOX_FAMILIES.find(([re]) => re.test(raw));
+  if (family) return family[1];
   if (KNOWN_SANDBOX_SLUGS.has(compact(raw))) return 'known:demo';
 
   // Words are split on anything that is not a letter or digit and lower-cased, with a trailing
