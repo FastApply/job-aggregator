@@ -57,6 +57,11 @@ const ALLOWED_BOARDS = new Set([
 // fastapply-backend/src/modules/automations/sandbox-job-board.util.ts.
 const SANDBOX_FAMILIES = [/^dunder-mifflin[0-9a-f]{8}-/i];
 
+// Demo tenants read by hand whose name the rule cannot see. Personio's "demorecruiting": page title
+// "Jobs at Demo Recruiting", "Emotional Latency Engineer" among 29 accounting positions, read
+// 2026-10-31. Keep it in step with KNOWN_SANDBOX_BOARDS in sandbox-job-board.util.ts.
+const KNOWN_SANDBOX_SLUGS = new Set(['demorecruiting']);
+
 // Direct-employer adapters: ats_slug is a shard selector, not a tenant id, so the name says
 // nothing about the board. Their URLs are checked, their slugs are not.
 const SHARD_SLUG_ATS = new Set(['amazon', 'netflix', 'google']);
@@ -73,6 +78,7 @@ function sandboxSlugRule(slug, { allow = ALLOWED_BOARDS } = {}) {
   if (!raw) return null;
   if (allow.has(compact(raw))) return null;
   if (SANDBOX_FAMILIES.some((re) => re.test(raw))) return 'family:rippling-demo';
+  if (KNOWN_SANDBOX_SLUGS.has(compact(raw))) return 'known:demo';
 
   // Words are split on anything that is not a letter or digit and lower-cased, with a trailing
   // number dropped: `leverdemo-8` -> [leverdemo], `RhaegalSandbox` -> [rhaegalsandbox].
