@@ -117,8 +117,13 @@ async function fetchJobs(rawSlug) {
   return { jobs, meta: { capped } };
 }
 
-/** The posting's HTML description from its JSON-LD JobPosting, or null. */
-/** The posting's JSON-LD description for backfill-descriptions, or 'SKIP' when the posting is gone. */
+/**
+ * The posting's description for backfill-descriptions, or 'SKIP' when the posting is gone.
+ * Most boards carry a JSON-LD JobPosting. Boards without one show the text in one of two layouts
+ * (sampled 2026-10-31, 9 of 20 rows the backfill could not fill): a Jobs_JobDetail_JobDescriptionText
+ * div (Zimmerman Advertising), or configurable-page sections ConfigurablePageDetail__JobDescription
+ * plus optional __RequiredSkills / __RequiredExperience (JMT, Temple Health, Boston University).
+ */
 async function fetchDescription(url) {
   let html;
   try {
@@ -127,15 +132,43 @@ async function fetchDescription(url) {
     if (/HTTP 404/.test(e.message)) return 'SKIP';
     throw e;
   }
+  return descriptionIn(html);
+}
+
+function descriptionIn(html) {
   for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
     try {
       const d = JSON.parse(m[1]);
       if (d && d['@type'] === 'JobPosting' && d.description) return d.description;
     } catch { /* not this block */ }
   }
+  const parts = [divInner(html, 'Jobs_JobDetail_JobDescriptionText')];
+  for (const [id, heading] of CONFIGURABLE_SECTIONS) {
+    const body = (divInner(html, `ConfigurablePageDetail__${id}`) || '').replace(/^<h2\b[^>]*>[\s\S]*?<\/h2>/i, '').trim();
+    if (text(body)) parts.push(heading ? `<h3>${heading}</h3>${body}` : body);
+  }
+  const body = parts.filter(Boolean).join('\n');
+  return text(body).length >= 20 ? body : null;
+}
+
+const CONFIGURABLE_SECTIONS = [['JobDescription', null], ['RequiredSkills', 'Required Skills'], ['RequiredExperience', 'Required Experience']];
+
+/** The inner HTML of the div with this id, matching nested divs, or null. */
+function divInner(html, id) {
+  const open = html.indexOf(`<div id="${id}"`);
+  if (open < 0) return null;
+  const start = html.indexOf('>', open) + 1;
+  const re = /<div\b|<\/div>/gi;
+  re.lastIndex = start;
+  let depth = 1;
+  let m;
+  while ((m = re.exec(html))) {
+    depth += m[0][1] === '/' ? -1 : 1;
+    if (depth === 0) return html.slice(start, m.index).trim();
+  }
   return null;
 }
 
 const fetchTimeoutMs = 15 * 60 * 1000;
 
-module.exports = { fetchJobs, fetchDescription, parsePage, hasNextPage, toJob, parseSlug, fetchTimeoutMs };
+module.exports = { fetchJobs, fetchDescription, descriptionIn, parsePage, hasNextPage, toJob, parseSlug, fetchTimeoutMs };

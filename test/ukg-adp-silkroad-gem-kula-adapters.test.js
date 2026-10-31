@@ -196,3 +196,25 @@ test('adp workforce now: a missing or empty posting is SKIP, a real one returns 
   try { assert.equal(await wfn.fetchDescription('u', raw), '<p>Care for patients on a 30-bed unit.</p>'); } finally { s.restore(); }
   assert.equal(await wfn.fetchDescription('u', {}), 'SKIP');
 });
+
+test('silkroad: a posting with no JSON-LD is read from its description div', () => {
+  const page = `<div class="x"><div id="Jobs_JobDetail_JobDescriptionText">
+    <p><strong>Overall Objective</strong></p><div><ul><li>Run day-to-day client campaigns</li></ul></div>
+  </div><div id="Jobs_JobDetail_LocationText">Fort Lauderdale</div></div>`;
+  const d = silkroad.descriptionIn(page);
+  assert.match(d, /^<p><strong>Overall Objective/);
+  assert.match(d, /<\/ul><\/div>$/);
+  assert.ok(!/Fort Lauderdale/.test(d));
+  const ld = '<script type="application/ld+json">{"@type":"JobPosting","description":"<p>From JSON-LD</p>"}</script>';
+  assert.equal(silkroad.descriptionIn(ld + page), '<p>From JSON-LD</p>');
+  assert.equal(silkroad.descriptionIn('<html></html>'), null);
+});
+
+test('silkroad: a configurable page joins its description and requirement sections', () => {
+  const page = `<div id="ConfigurablePageDetail__TrackingCode"><h2>Tracking Code</h2> <div>26300</div> </div>
+    <div id="ConfigurablePageDetail__JobDescription"><h2>Job Description </h2> <div><p>Review roadway plans and site layouts.</p></div></div>
+    <div id="ConfigurablePageDetail__RequiredSkills"><h2>Required Skills</h2> <div><ul><li>AutoCAD</li></ul></div></div>`;
+  assert.equal(silkroad.descriptionIn(page),
+    '<div><p>Review roadway plans and site layouts.</p></div>\n<h3>Required Skills</h3><div><ul><li>AutoCAD</li></ul></div>');
+  assert.match(silkroad.descriptionIn('<div id="ConfigurablePageDetail__JobDescription"><div><p>Serves as the primary resource to the treatment team.</p></div></div>'), /primary resource/);
+});
