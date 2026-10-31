@@ -8,6 +8,8 @@
  * Designed to run inline during sync (fast, no I/O).
  */
 
+const { withoutNordicIntern } = require('./nordic-intern');
+
 // ── Remote Detection ──────────────────────────────────────────────
 
 const REMOTE_POSITIVE = [
@@ -445,9 +447,11 @@ function classifyExperienceLevel(title, description) {
   const t = title || '';
   const titleLower = t.toLowerCase();
 
-  // Internship wins over everything (e.g. "Sales Intern", "Marketing Intern").
+  // Internship wins over everything (e.g. "Sales Intern", "Marketing Intern"), but not a Nordic or
+  // Dutch "intern", which means internal ("Intern revisor", "Gruppchef Intern Logistik").
+  const tIntern = withoutNordicIntern(t);
   for (const re of LEVEL_PATTERNS.internship) {
-    if (re.test(t)) return 'internship';
+    if (re.test(tIntern)) return 'internship';
   }
 
   // IC false-friend families — resolve BEFORE the generic exec/lead patterns so

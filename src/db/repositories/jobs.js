@@ -4,6 +4,7 @@ const { aliasGroup, isShortAlias } = require('../../utils/location-aliases');
 const { resolveCountry, norm, AMBIGUOUS_COUNTRY_NAMES } = require('../../utils/location-countries');
 const { normalizeEmploymentType, normalizeWorkplaceType } = require('../../utils/extract');
 const { parsePostedWindow } = require('../../utils/posted-window');
+const { NORDIC_INTERN_SQL } = require('../../utils/nordic-intern');
 
 // Upper bound on result counts — see countActive. Env-tunable.
 const COUNT_CAP = parseInt(process.env.SEARCH_COUNT_CAP, 10) || 10000;
@@ -176,9 +177,11 @@ function buildFilters(filters = {}) {
         const unlabeled = wantsUnlabeled ? " OR j.employment_type IS NULL OR j.employment_type = ''" : '';
         // The index files a title that says "Intern" under Internship whatever the ATS stated
         // (meili.js indexEmploymentType). Mirrored only for an internship request, so the title
-        // scan the comment above removed does not come back for every filtered search.
+        // scan the comment above removed does not come back for every filtered search. A Nordic
+        // "intern" before its noun means internal (nordic-intern.js) and is left out.
         const internTitle = canon.includes('Internship')
-          ? " OR j.title ~* '\\m(intern|interns|internship|internships|stagiaire|practicante)\\M'" : '';
+          ? " OR (j.title ~* '\\m(intern|interns|internship|internships|stagiaire|practicante)\\M'"
+            + ` AND j.title !~* '${NORDIC_INTERN_SQL}')` : '';
         clauses.push(`(j.employment_type IN (${canon.map(() => '?').join(', ')})${unlabeled}${internTitle})`);
         params.push(...canon);
       }
