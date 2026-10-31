@@ -172,3 +172,8 @@ test('Rippling demo tenants are one family, whatever their uuid', () => {
   assert.equal(sandboxSlugRule('Dunder-Mifflin50317daf-bf46-4119-a983-c418321babdc64b6d522e654ea8f9c154f84'), 'family:rippling-demo');
   assert.equal(sandboxSlugRule('dunder-mifflin-paper'), null);
 });
+
+test('a demo tenant read by hand is a sandbox; a real name starting with demo is not', () => {
+  assert.equal(sandboxSlugRule('demorecruiting'), 'known:demo');
+  assert.equal(sandboxSlugRule('demodesk-gmbh'), null);
+});

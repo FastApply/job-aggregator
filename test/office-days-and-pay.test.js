@@ -29,3 +29,11 @@ test('a range with the code after each figure is a range', () => {
   assert.deepEqual(extractSalary(hitachi), { min: '53000', max: '70000', currency: 'USD', interval: 'yearly' });
   assert.deepEqual(extractSalary('Compensation: $100,000 - $120,000 base'), { min: '100000', max: '120000', currency: 'USD', interval: 'yearly' });
 });
+
+test('a Greenhouse pay block is a range, in raw markup and after stripHtml', () => {
+  const raw = '<div class="pay-range"><span>$110,000</span><span class="divider">&mdash;</span><span>$115,000 USD</span></div>';
+  const want = { min: '110000', max: '115000', currency: 'USD', interval: 'yearly' };
+  assert.deepEqual(extractSalary(raw), want);
+  assert.deepEqual(extractSalary('US Pay Range$110,000&mdash;$115,000 USD'), want);
+  assert.equal(extractSalary('<span>₹25</span><span>&mdash;</span><span>₹35 INR</span>'), null);
+});
