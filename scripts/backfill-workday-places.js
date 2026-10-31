@@ -36,9 +36,26 @@ const placeIn = (body) => {
 
 async function main() {
   const db = require('../src/db/connection');
-  const query = db.queryWithTimeout
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const once = db.queryWithTimeout
     ? (sql, params) => db.queryWithTimeout(sql, params, 120000)
     : (sql, params) => db.query(sql, params);
+  // Between batches the pool's clients sit idle past its 10 s idle timeout while Workday answers,
+  // so nearly every batch reconnects, and through an SSH tunnel a connect took 2.5-16.5 s
+  // (2026-10-31): the 10 s connect timeout killed the first armed run. A lost connection is
+  // retried; every statement here is safe to repeat.
+  const query = async (sql, params) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await once(sql, params);
+      } catch (e) {
+        const lost = /connection (terminated|timeout)|timeout exceeded when trying to connect|ECONNRESET|ECONNREFUSED/i
+          .test(`${e.message} ${e.cause?.message || ''}`);
+        if (!lost || attempt >= 5) throw e;
+        await sleep(2000 * attempt);
+      }
+    }
+  };
   const APPLY = process.env.APPLY === '1';
   const LIMIT = parseInt(process.env.LIMIT || (APPLY ? '100000' : '200'), 10);
   const CONCURRENCY = parseInt(process.env.CONCURRENCY || '3', 10);
@@ -46,7 +63,6 @@ async function main() {
   const MAX_OUTBOX = parseInt(process.env.MAX_OUTBOX || '20000', 10);
   const POLL_MS = parseInt(process.env.POLL_MS || '20000', 10);
   const CKPT = process.env.CKPT || '/tmp/workday-places-backfill.pos';
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   let from = 0;
   if (APPLY && fs.existsSync(CKPT)) {
