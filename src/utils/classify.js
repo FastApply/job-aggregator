@@ -70,7 +70,10 @@ function classifyRemote(title, location, workplaceType, description) {
   // ...as a work model: "Remote Operations Center Specialist" and "Remote Sensing Analyst" are not.
   if (/\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))/i.test(title || '')) return true;
   if (/\bremote\b/i.test(location || '') && !/hybrid/i.test(location || '')) return true;
-  if (/\b(?:worldwide|anywhere|global)\b/i.test(location || '')) return true;
+  // The location IS the work model ("Worldwide", "Global (Remote)"), or names "Anywhere" as its
+  // place ("Anywhere, OH": Workday's remote-within-a-state). Not a word inside a place or an office:
+  // "1405 Worldwide Blvd", "Bonifacio Global City", "MUFG Global Service Private Ltd. - Bengaluru".
+  if (locationIsWorldwide(location) || /(?:^|[,;|(])\s*anywhere\s*(?:$|[,;|)])/i.test(location || '')) return true;
 
   // Description signals
   for (const re of REMOTE_POSITIVE) {
@@ -98,13 +101,29 @@ const WORLDWIDE_POSITIVE = [
   // NOT: remote-first — that's a work style, not location
 ];
 
-const WORLDWIDE_LOCATION = [
-  /\bworldwide\b/i,
-  /\bglobal\b/i,
-  /\bworld\b/i,
-  /\banywhere\b/i,
-  // NOT: /^remote$/i — "Remote" alone doesn't mean worldwide
-];
+// A location that is a work model rather than a place: every word in it is one of these, and at
+// least one says worldwide. A worldwide word INSIDE a place or an office name is not one: on
+// 2026-11-01, 1,300 of the board's 3,431 worldwide rows were "1405 Worldwide Blvd" (Hebron, KY),
+// "Bonifacio Global City, PHL", "MUFG Global Service Private Ltd. - Bengaluru (BCIT)", "Local
+// Office Pune (Global Function)", "NYC Global HQ", a ship's "ROYAL CARIBBEAN GROUP, worldwide",
+// a Workday "Anywhere, OH". Remote Worldwide searches got them as worldwide jobs, and a remote
+// search near London got Manila and Medellin offices. "Remote" alone is not worldwide.
+const WORLDWIDE_WORDS = new Set(['worldwide', 'world', 'ww', 'global', 'globally', 'anywhere', 'weltweit']);
+const WORK_MODEL_WORDS = new Set([
+  'wide', 'remote', 'remotely', 'virtual', 'home', 'based', 'homebased', 'fully', 'work', 'from',
+  'in', 'the', 'other', 'contractor', 'contract', 'only', 'no', 'location', 'locations',
+  'restriction', 'restrictions', 'open', 'to', 'all', 'subject', 'approval', 'more', 'projects',
+  'and', 'or',
+]);
+
+function locationIsWorldwide(location) {
+  // "Worldwide, but must be willing to attend regular EST meetings" is still worldwide.
+  const loc = String(location || '').replace(/,\s*but\b.*$/i, '');
+  // Unicode-aware: "上海, worldwide" names a city, and an emoji ("🌎 Global") is not a word.
+  const words = loc.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (!words.some((w) => WORLDWIDE_WORDS.has(w))) return false;
+  return words.every((w) => WORLDWIDE_WORDS.has(w) || WORK_MODEL_WORDS.has(w) || /^\d+$/.test(w));
+}
 
 // Country/region signals in LOCATION field that indicate NOT worldwide
 const COUNTRY_SPECIFIC_LOCATION = [
@@ -159,10 +178,9 @@ function classifyRemoteWorldwide(title, location, description, isRemote) {
   // City name in title suggests location-specific role
   if (/\b(?:dallas|fort\s*worth|new\s*york|chicago|los\s*angeles|san\s*francisco|houston|atlanta|miami|austin|denver|seattle|boston|portland|phoenix|charlotte|nashville|minneapolis|detroit|philadelphia|tampa|orlando|las\s*vegas|pittsburgh|indianapolis|columbus|raleigh|memphis|richmond|salt\s*lake|sacramento|san\s*diego|san\s*antonio|san\s*jose|terre\s*haute|south\s*oc)\b/i.test(titleStr)) return false;
 
-  // Step 2: Location explicitly says worldwide/anywhere/global
-  for (const re of WORLDWIDE_LOCATION) {
-    if (re.test(loc)) return true;
-  }
+  // Step 2: The location is a worldwide work model ("Worldwide", "Remote - Global", "Anywhere in
+  // the World"), not a place that holds the word
+  if (locationIsWorldwide(loc)) return true;
 
   // Step 3: No location — check description for EXPLICIT worldwide signals
   // But also check for country restrictions in description
@@ -510,4 +528,4 @@ function classifyJob(job) {
   };
 }
 
-module.exports = { classifyJob, classifyRemote, classifyVisa, classifyExperienceLevel, classifyRemoteWorldwide };
+module.exports = { classifyJob, classifyRemote, classifyVisa, classifyExperienceLevel, classifyRemoteWorldwide, locationIsWorldwide };
