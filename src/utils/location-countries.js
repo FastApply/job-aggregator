@@ -429,7 +429,11 @@ function readCountries(text) {
     // "HQ - San Diego, CA" is that shape too: a label, then the city and its state, one comma.
     // Read as three segments, its CA was Canada, so a Canada search returned San Diego (live,
     // 2026-10-30: Axos's UX Design Intern, applied to for a candidate in Germany/Canada/NL).
-    const bareCityState = (segments.length <= 2 || dashLedCityState(s)) && US_STATES.has(last);
+    // A street address before them ("4660 La Jolla Village Dr #100, San Diego, CA") is the same
+    // shape: one place and its state. Read as three segments, CA was Canada and the home-city
+    // search filter dropped a San Diego posting (supply loop, 2026-11-01).
+    const bareCityState = (segments.length <= 2 || dashLedCityState(s) || streetFirst(segments))
+      && US_STATES.has(last);
     // "Adelaide, SA", "Regina, SK", "St. John's, NL": a province or state code that is also an
     // ISO country code, beside one of that province's cities (location-subdivisions.js).
     const province = prev ? cityCodeCountry(prev, last) : null;
@@ -535,6 +539,11 @@ function dashLedCityState(text) {
     && !/[;|/]/.test(text);
 }
 
+/** "<number> <street>, City, ST": three parts, the first a street address. */
+function streetFirst(segments) {
+  return segments.length === 3 && /^\d+[a-z]?\s+\S/.test(segments[0]);
+}
+
 function usStateReading(segments, rawText) {
   // Several addresses joined by ";" or "|" share one comma segment: "Toronto, ON, Canada;
   // Chicago, IL, USA". Only the last one belongs to the trailing state.
@@ -585,12 +594,18 @@ function usStateReading(segments, rawText) {
   // and the job got no country at all — invisible to location=United States (the search canary
   // caught "US - Austin, TX" on 2026-10-04; ~16k live jobs have this shape).
   const usHead = end === 3 && LOOKUP.get(clean[0]) === 'us' && !US_STATE_NAMES.has(clean[0]);
-  if (!usTail && !usHead && end !== 2 && !dashLedCityState(norm(rawText)) && !startsAddress) return null;
+  if (!usTail && !usHead && end !== 2 && !dashLedCityState(norm(rawText)) && !startsAddress
+    && !(end === 3 && streetFirst(segments))) return null;
   if (usTail || usHead) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
 
   const rawLast = String(rawText).split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean).pop() || '';
   if (/^[a-z]{2}$/.test(rawLast) && /[A-Z]/.test(String(rawText)) && NAME.has(st)) return reading([st]);
-  const foreign = FOREIGN_BY_CITY_STATE.get(`${city}|${st}`);
+  // A district in brackets after the city ("Mumbai (Andheri East), IN") names the same city:
+  // without this the IN read as Indiana (supply loop, 2026-11-01).
+  const cityBase = end >= 2
+    ? tail(segments[end - 2]).replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim()
+    : null;
+  const foreign = FOREIGN_BY_CITY_STATE.get(`${city}|${st}`) || FOREIGN_BY_CITY_STATE.get(`${cityBase}|${st}`);
   if (foreign) return reading([foreign]);
   if (st === 'de' && !DELAWARE_TOWNS.has(city)) return reading(['de']);
   return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);

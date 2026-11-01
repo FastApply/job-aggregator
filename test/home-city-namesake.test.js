@@ -50,3 +50,11 @@ test('rows the namesake filter must not drop: Indian state codes and UK read as 
   assert.deepEqual(countriesFromLocation('Majuro, MH'), ['mh']);
   assert.deepEqual(countriesFromLocation('Lome, TG'), ['tg']);
 });
+
+test('a district in brackets and a street address before the city keep the right country', () => {
+  assert.deepEqual(countriesFromLocation('Mumbai (Andheri East), IN'), ['in']);
+  assert.deepEqual(countriesFromLocation('4660 La Jolla Village Dr #100, San Diego, CA'), ['us']);
+  assert.deepEqual(countriesFromLocation('Indianapolis (Downtown), IN'), ['us']);
+  assert.deepEqual(countriesFromLocation('Toronto, ON, CA'), ['ca']);
+  assert.deepEqual(countriesFromLocation('123 Main St, Toronto, ON'), ['ca']);
+});
