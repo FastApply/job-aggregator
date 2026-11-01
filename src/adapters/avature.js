@@ -93,6 +93,49 @@ function byClass(html, cls) {
 
 const LOCATION_LABEL = /location|ort\b|standort|ubicaci|municipio|lieu|localit|city|cidade|plaats|place/i;
 
+// Every country's English name, to tell a place from a category in an unlabelled subtitle.
+const COUNTRIES = (() => {
+  const names = new Intl.DisplayNames(['en'], { type: 'region' });
+  const out = new Set(['usa', 'uk']);
+  for (let a = 65; a <= 90; a++) {
+    for (let b = 65; b <= 90; b++) {
+      const code = String.fromCharCode(a, b);
+      const name = names.of(code);
+      if (name && name !== code) out.add(name.toLowerCase());
+    }
+  }
+  return out;
+})();
+
+/**
+ * The place in a list item's unlabelled subtitle. Its parts are spans or "|" and their order is
+ * the site's: "Air Traffic Management | Austria | Vienna | FREQUENTIS AG" (category, country, city,
+ * company), "R&D / Engineering. Zurich. Nanikon-Greifensee. Switzerland. 30-Oct-2026." (category,
+ * region, city, country, date), "Chicago, IL, United States  Job ID:14282". Null when no part can
+ * be told to be a place: the job page may still say. Frequentis's rows had none, its Vienna Sales
+ * Engineer was tagged remote on a perk, and First Apply took it for a candidate in Kentucky who
+ * works remotely only (2026-10-31).
+ */
+function subtitlePlace(html) {
+  const spans = [...String(html || '').matchAll(/<span\b[^>]*>([\s\S]*?)<\/span>/gi)].map((m) => text(m[1]));
+  const parts = (spans.length ? spans : text(html).split('|'))
+    .map((p) => p.trim().replace(/\.$/, '').trim())
+    .filter((p) => p && !/^\d{1,2}-[a-z]{3}-\d{4}$/i.test(p) && !/^(?:job id|ref\b|req\b)/i.test(p));
+  const named = parts.find((p) => p.includes(',') && COUNTRIES.has(p.split(',').pop().trim().toLowerCase()));
+  if (named) return named;
+  const at = parts.findIndex((p) => COUNTRIES.has(p.toLowerCase()));
+  if (at === -1) return null;
+  const city = at + 1 < parts.length - 1 ? parts[at + 1] : at > 1 ? parts[at - 1] : null;
+  return city ? `${city}, ${parts[at]}` : parts[at];
+}
+
+/** The search page's results table, when it has a place column ("Location(s)"): its cell index. */
+function tableLocationCell(html) {
+  const heads = [...html.matchAll(/<th\b[^>]*scope="col"[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => text(m[1]));
+  const at = heads.findIndex((h) => /location/i.test(h));
+  return at > 0 ? at - 1 : -1; // the first column is the title, a <th> in each row
+}
+
 /** label -> value text pairs from the article__content__view fields. */
 function fieldsOf(html) {
   const fields = {};
@@ -116,6 +159,7 @@ function parseList(html, base) {
   const rows = [];
   const seen = new Set();
   const re = /<a\b[^>]*href="([^"]*\/JobDetail\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const tableCell = tableLocationCell(html);
   let m;
   while ((m = re.exec(html))) {
     const href = decode(m[1]);
@@ -125,13 +169,15 @@ function parseList(html, base) {
     seen.add(id);
     // The job's own block: the nearest <article> or <li> that opens before the link and still holds
     // it (a share menu's <li> can sit between the article's start and the title link).
-    const block = ['<article', '<li'].map((t) => html.lastIndexOf(t, m.index)).filter((i) => i >= 0)
+    const block = ['<article', '<li', '<tr'].map((t) => html.lastIndexOf(t, m.index)).filter((i) => i >= 0)
       .sort((a, b) => b - a).map((i) => innerAt(html, i)).find((b) => b.includes(m[1])) || '';
     const fields = fieldsOf(block);
     const label = Object.keys(fields).find((k) => LOCATION_LABEL.test(k));
     const subtitle = text(byClass(block, 'article__header__text__subtitle')[0] || byClass(block, 'listSingleColumnItemMiscData')[0])
       .split('·')[0].trim(); // "Largo, Florida, United States · · Posted 19-Oct-2026"
-    const location = text(byClass(block, 'list-item-location')[0]) || (label ? text(fields[label]) : '') || subtitle || null;
+    const cell = tableCell >= 0 ? [...block.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)][tableCell] : null;
+    const location = text(byClass(block, 'list-item-location')[0]) || (label ? text(fields[label]) : '') || subtitle
+      || (cell ? text(cell[1]) : '') || subtitlePlace(byClass(block, 'list__item__text__subtitle')[0]) || null;
     rows.push({ id, url: new URL(href, base).href.replace(/\?.*$/, ''), title, location });
   }
   return rows;
@@ -174,13 +220,19 @@ function parseDetail(html) {
   }
   const description = bodies.length ? bodies.join('\n').trim() : null;
   const locLabel = Object.keys(fields).find((k) => LOCATION_LABEL.test(k));
+  // Unifi's fields are "State" and "City"; Frequentis's older template has the place in moreDetail.
+  const stateLabel = Object.keys(fields).find((k) => /^state$/i.test(k));
+  const located = locLabel ? text(fields[locLabel]) : '';
+  const fieldPlace = stateLabel && located && /^city$/i.test(locLabel) ? `${located}, ${text(fields[stateLabel])}` : located;
+  const moreDetail = byClass(html, 'moreDetail')[0];
+  const headPlace = moreDetail ? text((moreDetail.match(/<span\b[^>]*>([\s\S]*?)<\/span>/i) || [])[1]) : '';
   const dateLabel = Object.keys(fields).find((k) => /posted|date|fecha|datum/i.test(k));
   const posted = dateLabel ? Date.parse(text(fields[dateLabel])) : NaN;
   const typeLabel = Object.keys(fields).find((k) => /employment type|job type|contrato|contract/i.test(k));
   return {
     ...(ld || {}),
     description,
-    location: (locLabel ? text(fields[locLabel]) : '') || (ld && ld.location) || null,
+    location: fieldPlace || (ld && ld.location) || headPlace || null,
     posted_at: Number.isNaN(posted) ? (ld && ld.posted_at) || null : new Date(posted).toISOString(),
     employment_type: (typeLabel ? text(fields[typeLabel]).slice(0, 60) : '') || (ld && ld.employment_type) || null,
   };
@@ -249,4 +301,9 @@ async function fetchDescription(url) {
   }
 }
 
-module.exports = { fetchJobs, parseSlug, parseList, parseDetail, toJob, fetchDescription, fetchTimeoutMs };
+/** The place on one posting's job page through the shared queue, for the location backfill. */
+async function fetchLocation(url) {
+  return parseDetail((await getHtml(url)).html).location;
+}
+
+module.exports = { fetchJobs, parseSlug, parseList, parseDetail, subtitlePlace, toJob, fetchDescription, fetchLocation, fetchTimeoutMs };

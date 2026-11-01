@@ -83,6 +83,26 @@ test('avature: list items across templates, and a job page with fields', () => {
   assert.throws(() => avature.parseSlug('koch'), /HTTP 404/);
 });
 
+test('avature: the place when the template gives it no label', () => {
+  const li = (title, id, subtitle) => `<li class="list__item list__item--boxed"><div class="list__item__text">
+    <div class="list__item__text__title"><a href="https://x.avature.net/careers/JobDetail/a/${id}">${title}</a></div>
+    <div class="list__item__text__subtitle collapaseIcon">${subtitle}</div></div></li>`;
+  const list = li('Sales Engineer (all genders)', 3677, 'Air Traffic Management | Austria | Vienna | FREQUENTIS AG')
+    + li('Expert Engineer', 23476, '<span>R&amp;D / Engineering.</span> <span>Zürich.</span> <span>Nänikon-Greifensee.</span> <span>Switzerland.</span> <span>30-Oct-2026.</span>')
+    + li('Business Analyst', 5992, '<span>Chicago, IL, United States</span> <span>Job ID:14282</span>')
+    + li('Marketing Manager', 11, 'Marketing | Corporate');
+  assert.deepEqual(avature.parseList(list, 'https://x.avature.net/careers/SearchJobs/').map((r) => r.location), [
+    'Vienna, Austria', 'Nänikon-Greifensee, Switzerland', 'Chicago, IL, United States', null,
+  ]);
+  const table = `<table><thead><tr><th scope="col">Title</th><th scope="col">Location(s)</th><th scope="col">Attendance</th></tr></thead><tbody>
+    <tr><th scope="row"><a class="link" href="https://emplois.bnc.ca/en_CA/careers/JobDetail/A3V80-ADJOINT/36578" title="Associate"> Associate </a></th><td> Surrey, British Columbia </td><td> On-Site </td></tr></tbody></table>`;
+  assert.equal(avature.parseList(table, 'https://emplois.bnc.ca/en_CA/careers/SearchJobs/')[0].location, 'Surrey, British Columbia');
+  const field = (l, v) => `<div class="article__content__view__field"><div class="article__content__view__field__label">${l}</div><div class="article__content__view__field__value">${v}</div></div>`;
+  const body = `<div class="infoTitle">Key Tasks</div><div class="infoDes"><p>${'Configure test rigs. '.repeat(5)}</p></div>`;
+  assert.equal(avature.parseDetail(field('State', 'Hawaii') + field('City', 'Kona') + body).location, 'Kona, Hawaii');
+  assert.equal(avature.parseDetail(`<div class=" moreDetail taUppercase"><span>Vienna </span><span>FREQUENTIS AG </span></div>${body}`).location, 'Vienna');
+});
+
 test('brassring: a search job becomes a job, the place read from the site layout', () => {
   const pre = { JobFieldsToDisplay: { Position1: 'formtext26', JobTitle: 'formtext15', Position3: ['autoreq', 'formtext2'], Summary: 'jobdescription' } };
   const layout = brassring.layoutOf(pre);
