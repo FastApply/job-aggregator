@@ -50,3 +50,35 @@ test('rows the namesake filter must not drop: Indian state codes and UK read as 
   assert.deepEqual(countriesFromLocation('Majuro, MH'), ['mh']);
   assert.deepEqual(countriesFromLocation('Lome, TG'), ['tg']);
 });
+
+test('a district in brackets and a street address before the city keep the right country', () => {
+  // The 2 of 205 rows the home-city filter dropped that were in the home country.
+  assert.deepEqual(countriesFromLocation('Mumbai (Andheri East), IN'), ['in']);
+  assert.deepEqual(countriesFromLocation('4660 La Jolla Village Dr #100, San Diego, CA'), ['us']);
+  // Unchanged: a US city with a district, Canadian three-part addresses.
+  assert.deepEqual(countriesFromLocation('Indianapolis (Downtown), IN'), ['us']);
+  assert.deepEqual(countriesFromLocation('Toronto, ON, CA'), ['ca']);
+  assert.deepEqual(countriesFromLocation('123 Main St, Toronto, ON'), ['ca']);
+});
+
+test('the reindex script queues only rows today\'s reading changes', () => {
+  const { needsReindex } = require('../scripts/reindex-location-countries');
+  assert.equal(needsReindex('Mumbai, MH'), 'in');
+  assert.equal(needsReindex('Hyderabad, TG'), 'in');
+  assert.equal(needsReindex('London, UK'), 'gb');
+  assert.equal(needsReindex('London, UK; Paris, France'), 'gb');
+  assert.equal(needsReindex('Mumbai (Andheri East), IN'), 'in');
+  assert.equal(needsReindex('4660 La Jolla Village Dr #100, San Diego, CA'), 'us');
+  // The real countries behind the codes, and rows no reading changed.
+  assert.equal(needsReindex('Zagreb, HR'), null);
+  assert.equal(needsReindex('Majuro, MH'), null);
+  assert.equal(needsReindex('Toronto, ON, CA'), null);
+  assert.equal(needsReindex('Indianapolis (Downtown), IN'), null);
+  assert.equal(needsReindex('London, United Kingdom'), null);
+  assert.equal(needsReindex(''), null);
+});
+
+test('a street address before a state code that is no country code was always the US', () => {
+  const { needsReindex } = require('../scripts/reindex-location-countries');
+  assert.equal(needsReindex('100 Congress Ave, Austin, TX'), null);
+});
