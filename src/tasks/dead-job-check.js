@@ -101,6 +101,83 @@ async function runWithConcurrency(items, maxConcurrency, fn) {
   return results;
 }
 
+// A sweep reads a bounded run of heap pages and the next one carries on after it.
+//
+// It used to be one SELECT with a LIMIT and no cursor, so every sweep started at the top of the
+// table and walked past everything it had stamped in the last recheckDays before reaching a row
+// it could use. Measured 2026-11-01: 563 sweeps averaged 2.16M blocks touched of a 2.28M-page
+// heap to return 5,000 rows, 37 s each (60 s at worst), 9 GB read and 2.3 GB of OTHER queries'
+// dirty pages written, a quarter of all reads and 44% of all writes pg_stat_statements tracks.
+// Through an index it went past the ring buffer, so all of that cycled the 6 GB buffer pool.
+// This read, same day: 5,000 rows, 3,808 blocks read, 358 ms.
+//
+// On a slow disk it was worse than wasteful. It ran into the 60 s statement ceiling, verified
+// nothing, and came back 20 minutes later to read it all again: on 2026-11-01 the attempts at
+// 01:57, 02:18 and 02:39 ran 57-58 s and were each cancelled, and a cancelled statement never
+// reaches pg_stat_statements, so the 563 above undercounts. In the 02:39 attempt and the two
+// minutes after it, 13 of 20 board searches took over 3 s, against 14 of 56 in the seven minutes
+// before and 0 of 11 after.
+//
+// The ORDER BY the old comment warned about is gone for good: this one only sorts a window.
+// ctid moves when a row is updated, which is harmless here: a row that moves ahead was just
+// stamped, and one that moves behind waits for the next pass.
+const WINDOW_PAGES = parseInt(process.env.PRUNE_WINDOW_PAGES || '4000', 10);
+const MAX_PAGES_PER_SWEEP = parseInt(process.env.PRUNE_MAX_PAGES_PER_SWEEP || '40000', 10);
+
+// In memory on purpose. A restart starts somewhere else, which costs nothing: the next pass
+// covers what this one missed, and no sweep can ever cost more than MAX_PAGES_PER_SWEEP.
+let nextPage = null;
+
+/**
+ * The rows one sweep will verify, read from at most MAX_PAGES_PER_SWEEP heap pages.
+ * Eligibility is what it always was; only the way to the rows changed.
+ */
+async function readCandidates(query, {
+  limit, tailDays, recheckDays, partitionMod, partitionRemainder, startPage,
+}) {
+  const { rows: [{ pages }] } = await query(
+    `SELECT (pg_relation_size('jobs') / current_setting('block_size')::int)::bigint AS pages`);
+  const heapPages = Number(pages);
+  if (!heapPages) return [];
+
+  let page = startPage ?? nextPage ?? Math.floor(Math.random() * heapPages);
+  if (page >= heapPages) page = 0;
+  const jobs = [];
+  const budget = Math.min(MAX_PAGES_PER_SWEEP, heapPages);
+  for (let read = 0; read < budget && jobs.length < limit; read += WINDOW_PAGES) {
+    const want = limit - jobs.length;
+    const { rows } = await query(
+      `SELECT j.id, j.url, (j.ctid::text::point)[0]::bigint AS heap_page,
+              (c.last_synced_at IS NOT NULL AND j.last_seen_at < c.last_synced_at - INTERVAL '5 minutes') AS missing_from_sync
+         FROM jobs j
+         JOIN companies c ON c.id = j.company_id
+        WHERE j.ctid >= $2::tid AND j.ctid < $3::tid
+          AND j.removed_at IS NULL
+          AND j.url IS NOT NULL
+          AND j.id % ${partitionMod} = ${partitionRemainder}
+          AND (j.last_checked_at IS NULL OR j.last_checked_at < NOW() - INTERVAL '${recheckDays} days')
+          AND (
+            (j.posted_at IS NOT NULL AND j.posted_at < NOW() - INTERVAL '${tailDays} days')
+            OR (c.last_synced_at IS NOT NULL AND j.last_seen_at < c.last_synced_at - INTERVAL '5 minutes')
+          )
+        ORDER BY j.ctid
+        LIMIT $1`,
+      [want, `(${page},0)`, `(${page + WINDOW_PAGES},0)`]
+    );
+    jobs.push(...rows);
+    // A window with rows left resumes on the page it stopped at; its stamped rows drop out.
+    page = rows.length === want ? Number(rows[rows.length - 1].heap_page) : page + WINDOW_PAGES;
+    if (page >= heapPages) page = 0;
+  }
+  nextPage = page;
+  return jobs;
+}
+
+/** For tests: forget where the last sweep stopped. */
+function resetSweepPosition() {
+  nextPage = null;
+}
+
 /**
  * Verify a rotating batch of jobs and prune confirmed-dead postings. This is now
  * the ONLY place jobs get marked removed_at — syncForCompany() (jobs.js) used to
@@ -135,7 +212,7 @@ async function runWithConcurrency(items, maxConcurrency, fn) {
  */
 async function pruneDeadJobs({
   limit = 400, concurrency = 10, tailDays = 30, recheckDays = 14,
-  partitionMod = 1, partitionRemainder = 0,
+  partitionMod = 1, partitionRemainder = 0, startPage,
 } = {}) {
   const { query } = require('../db/connection');
   const t = Number(tailDays) || 30;
@@ -143,38 +220,9 @@ async function pruneDeadJobs({
   const pMod = Number(partitionMod) || 1;
   const pRem = ((Number(partitionRemainder) || 0) % pMod + pMod) % pMod;
 
-  // NO ORDER BY, deliberately. It used to sort by `missing_from_sync DESC, last_checked_at ASC`
-  // to work the freshest signal first. That ordering cost everything: it cannot be served by an
-  // index (missing_from_sync is computed across the join), so Postgres had to scan AND SORT the
-  // entire eligible population — ~1.35M rows per partition — before returning a single row. The
-  // LIMIT bought nothing, which is why shrinking the batch never helped.
-  //
-  // Measured against the live database:
-  //     LIMIT    500 with ORDER BY  -> connection died
-  //     LIMIT  1,000 with ORDER BY  -> exceeded the worker's 60s ceiling, pruned nothing
-  //     LIMIT    500 without        ->  3.4s
-  //     LIMIT 20,000 without        -> 33s
-  //
-  // Unordered, the scan stops as soon as it has LIMIT rows, so cost tracks the batch instead of
-  // the backlog. Coverage does not depend on the ordering: every job in a batch gets stamped
-  // with last_checked_at, which drops it out of the eligible set for recheckDays, so the queue
-  // drains whatever order it is read in. Prioritisation was a nicety; completing was not.
-  const { rows: jobs } = await query(
-    `SELECT j.id, j.url,
-            (c.last_synced_at IS NOT NULL AND j.last_seen_at < c.last_synced_at - INTERVAL '5 minutes') AS missing_from_sync
-       FROM jobs j
-       JOIN companies c ON c.id = j.company_id
-      WHERE j.removed_at IS NULL
-        AND j.url IS NOT NULL
-        AND j.id % ${pMod} = ${pRem}
-        AND (j.last_checked_at IS NULL OR j.last_checked_at < NOW() - INTERVAL '${r} days')
-        AND (
-          (j.posted_at IS NOT NULL AND j.posted_at < NOW() - INTERVAL '${t} days')
-          OR (c.last_synced_at IS NOT NULL AND j.last_seen_at < c.last_synced_at - INTERVAL '5 minutes')
-        )
-      LIMIT $1`,
-    [limit]
-  );
+  const jobs = await readCandidates(query, {
+    limit, tailDays: t, recheckDays: r, partitionMod: pMod, partitionRemainder: pRem, startPage,
+  });
   if (!jobs.length) return { checked: 0, dead: 0, uncertain: 0 };
 
   const deadIds = [];
@@ -218,4 +266,4 @@ async function pruneDeadJobs({
   return { checked: jobs.length, dead: deadIds.length, uncertain };
 }
 
-module.exports = { DEAD_INDICATORS, checkUrl, runWithConcurrency, pruneDeadJobs };
+module.exports = { DEAD_INDICATORS, checkUrl, runWithConcurrency, pruneDeadJobs, readCandidates, resetSweepPosition };
