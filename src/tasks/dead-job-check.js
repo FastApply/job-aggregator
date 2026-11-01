@@ -45,6 +45,20 @@ function lastPathSegment(u) {
   } catch { return null; }
 }
 
+/**
+ * True when a non-200 CXS answer is Workday's own error for a missing posting: 403 with
+ * `S22`, or 404/410 with any Workday `errorCode`. Workday repeats the status in the body as
+ * `httpStatus`; an answer that disagrees with itself is not the resource we asked.
+ */
+function readWorkdayError(status, body) {
+  if (!body || typeof body !== 'object') return false;
+  const { errorCode, httpStatus } = body;
+  if (typeof errorCode !== 'string' || !errorCode) return false;
+  if (httpStatus !== undefined && Number(httpStatus) !== status) return false;
+  if (status === 403) return errorCode === 'S22';
+  return status === 404 || status === 410;
+}
+
 // Workday career pages are a JavaScript SPA: the server returns 200 with an app shell for EVERY
 // path, live or dead, and renders "job not found" client-side. So the generic HTML check below
 // is structurally blind to them — no 404, no dead-page phrase, no redirect off the posting. It
@@ -53,9 +67,15 @@ function lastPathSegment(u) {
 //
 // The CXS JSON endpoint behind the SPA does answer honestly, so we ask that instead:
 //
-//   200 + jobPostingInfo -> live
-//   403 / 404 / 410      -> gone
-//   anything else        -> uncertain, leave it alone
+//   200 + jobPostingInfo                         -> live
+//   403 with Workday's errorCode S22             -> gone
+//   404 / 410 with any Workday errorCode         -> gone
+//   anything else (an HTML 403 from an edge too) -> uncertain, leave it alone
+//
+// Only Workday's own JSON error reads as gone, the same reading the backend's apply pre-flight
+// uses (workday/requisition-probe.ts there). A WAF or edge block answers 403 in HTML, and a bare
+// 403 would delete a live job for every user. Measured 2026-11-01 on 400 Workday rows the board
+// served to First Apply's starved searches: 173 answered 403 S22, none answered a 403 without it.
 //
 // 403 meaning "gone" rather than "blocked" was not assumed — it was tested four ways before
 // being wired to an irreversible write:
@@ -77,7 +97,11 @@ async function checkWorkdayUrl(url) {
       signal: AbortSignal.timeout(15000),
     });
     if (res.status === 403 || res.status === 404 || res.status === 410) {
-      return { alive: false, reason: `workday cxs HTTP ${res.status}` };
+      let body = null;
+      try { body = await res.json(); } catch { /* HTML or empty: not Workday answering */ }
+      return readWorkdayError(res.status, body)
+        ? { alive: false, reason: `workday cxs HTTP ${res.status} ${body.errorCode}` }
+        : { alive: null, reason: `workday cxs HTTP ${res.status} without Workday's error` };
     }
     if (!res.ok) return { alive: null, reason: `workday cxs HTTP ${res.status}` };
     const detail = await res.json();
@@ -139,6 +163,56 @@ async function checkOracleUrl(url) {
   }
 }
 
+/**
+ * SmartRecruiters postings, asked of the public Posting API rather than the page.
+ *
+ * A closed SmartRecruiters posting keeps its job ad up with a disabled "Sorry, this job has
+ * expired" button. The generic page check reads most of those from the expired text (29 of 30
+ * on 2026-11-01), but DataDome fronts these hosts and answers a bot with 403/404, which leaves
+ * the page check unsure. The Posting API (`api.smartrecruiters.com/v1/companies/<co>/postings/<id>`)
+ * is not behind DataDome, costs one small JSON read instead of a page, and names a closed
+ * posting `active: false` — the same reading the backend's apply pre-flight uses
+ * (JobLivenessService.checkSmartRecruiters): 37 of 37 expired postings answered it, 40 of 40
+ * submitted the same day answered `active: true`. Measured 2026-11-01 on 200 SmartRecruiters
+ * rows the board served to First Apply's starved searches: 63 answered `active: false`, and
+ * the API agreed with the page on every one the page could read.
+ *
+ * Gone only on a 200 JSON posting that names itself inactive. A 404 (a posting id the API does
+ * not know), a rate limit, or a body that is not a posting is no opinion, and the generic check
+ * still runs.
+ */
+const SR_HOSTS = new Set(['jobs.smartrecruiters.com', 'smartrecruiters.com', 'www.smartrecruiters.com']);
+
+function smartRecruitersPostingApi(url) {
+  try {
+    const u = new URL(url);
+    if (!SR_HOSTS.has(u.hostname.toLowerCase())) return null;
+    const [company, slug] = u.pathname.split('/').filter(Boolean);
+    const id = /^(\d{6,})/.exec(slug || '')?.[1];
+    if (!company || !id) return null;
+    return `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(company)}/postings/${id}`;
+  } catch { return null; }
+}
+
+async function checkSmartRecruitersUrl(url) {
+  const api = smartRecruitersPostingApi(url);
+  if (!api) return null;
+  try {
+    const res = await fetch(api, {
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.status !== 200) return null;
+    let body = null;
+    try { body = await res.json(); } catch { return null; }
+    if (!body || typeof body !== 'object' || body.id === undefined) return null;
+    if (body.active === false) return { alive: false, reason: 'smartrecruiters posting inactive' };
+    if (body.active === true) return { alive: true, reason: null };
+    return null;
+  } catch { return null; }
+}
+
 // Returns { alive: true|false|null, reason }. null = uncertain (do NOT prune).
 async function checkUrl(url) {
   const wd = await checkWorkdayUrl(url);
@@ -148,6 +222,9 @@ async function checkUrl(url) {
   // 200 whether or not the job exists, so the HTML check cannot answer the question.
   const oc = await checkOracleUrl(url);
   if (oc) return oc;
+
+  const sr = await checkSmartRecruitersUrl(url);
+  if (sr) return sr;
 
   try {
     const controller = new AbortController();
@@ -371,4 +448,4 @@ async function pruneDeadJobs({
   return { checked: jobs.length, dead: deadIds.length, uncertain };
 }
 
-module.exports = { DEAD_INDICATORS, checkUrl, checkOracleUrl, runWithConcurrency, pruneDeadJobs, readCandidates, resetSweepPosition };
+module.exports = { DEAD_INDICATORS, checkUrl, checkOracleUrl, checkWorkdayUrl, checkSmartRecruitersUrl, readWorkdayError, smartRecruitersPostingApi, runWithConcurrency, pruneDeadJobs, readCandidates, resetSweepPosition };
