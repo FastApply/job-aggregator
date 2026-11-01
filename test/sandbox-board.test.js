@@ -178,3 +178,10 @@ test('a demo tenant read by hand is a sandbox; a real name starting with demo is
   assert.equal(sandboxSlugRule('cmsprep'), 'known:demo');
   assert.equal(sandboxSlugRule('demodesk-gmbh'), null);
 });
+
+test('Teamtailor sandboxes minted with an epoch are one family; a name starting "sandbox" is not', () => {
+  assert.equal(sandboxSlugRule('sandboxnytlaegejob-1732104705'), 'family:teamtailor-demo');
+  assert.equal(sandboxSlugRule('sandboxsaurtestjtmo-1743074489'), 'family:teamtailor-demo');
+  assert.equal(sandboxSlugRule('sandboxinteractive'), null);
+  assert.equal(sandboxSlugRule('sandboxvr'), null);
+});
