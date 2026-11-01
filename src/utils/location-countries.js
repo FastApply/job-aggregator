@@ -356,6 +356,10 @@ function readCountries(text) {
   // segment is a US state, they name at least two different states (or one that is no country code,
   // like TX), they make up a fair share of the segments, and no other country is named.
   // "Berlin, DE, Munich, DE" (one repeated code that is also a country) stays ambiguous.
+  // "UK" is no ISO code, so neither the name scan (three letters and up) nor the trailing-code
+  // read took it: "London, UK" had no country and "London, UK; Paris, France" read as France
+  // alone. A UK standing on its own between separators is the United Kingdom.
+  if (/(?:^|[,;/|]|\s-\s)\s*(?:remote\s+)?uk(?:\s+remote)?\s*(?=$|[,;/|]|\s-\s)/.test(s)) found.add('gb');
   const codes = segments.filter((seg) => /^[a-z]{2}$/.test(seg) && seg !== 'us');
   // Four parts at least: "Chennai, TN, IN" is Tamil Nadu, India, though both codes are US states.
   const usCityList = codes.length >= 2 && segments.length >= 4
