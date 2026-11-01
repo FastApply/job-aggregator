@@ -74,6 +74,12 @@ const CITY_CODES = [
   ['victoria', 'au', ['melbourne', 'geelong', 'ballarat', 'bendigo', 'shepparton', 'mildura',
     'warrnambool', 'frankston', 'dandenong', 'box hill', 'cremorne', 'carlton', 'docklands',
     'southbank', 'clayton', 'werribee', 'traralgon', 'wodonga', 'tarneit', 'doreen', 'wollert']],
+  // Indian state codes that are also ISO codes: "Mumbai, MH" read as the Marshall Islands,
+  // "Hyderabad, TG" as Togo and "Gurugram, HR" as Croatia, so India searches lost them (supply
+  // loop, 2026-11-01).
+  ['mh', 'in', ['mumbai', 'navi mumbai', 'thane', 'pune', 'nagpur', 'nashik', 'aurangabad']],
+  ['tg', 'in', ['hyderabad', 'secunderabad', 'warangal']],
+  ['hr', 'in', ['gurgaon', 'gurugram', 'faridabad']],
   ['sa', 'au', ['adelaide', 'mount gambier', 'whyalla', 'port augusta', 'port lincoln',
     'murray bridge', 'gawler', 'port pirie', 'mawson lakes', 'salisbury', 'elizabeth']],
 ];

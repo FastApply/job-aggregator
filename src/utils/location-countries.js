@@ -417,6 +417,10 @@ function readCountries(text) {
   const segments = s.split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean);
   const last = segments[segments.length - 1];
   const prev = segments[segments.length - 2];
+  // "UK" is no ISO code, so neither the name scan (three letters and up) nor the trailing-code
+  // read took it: "London, UK" had no country and "London, UK; Paris, France" read as France
+  // alone. A UK standing on its own between separators is the United Kingdom.
+  if (/(?:^|[,;/|]|\s-\s)\s*(?:remote\s+)?uk(?:\s+remote)?\s*(?=$|[,;/|]|\s-\s)/.test(s)) found.add('gb');
   if (last && /^[a-z]{2}$/.test(last) && NAME.has(last)) {
     // The veto applies only to the bare "City, ST" shape, which is how US locations are written
     // and where the trailing code is certainly a state. With three or more segments the trailing
