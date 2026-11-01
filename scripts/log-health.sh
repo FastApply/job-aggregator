@@ -32,7 +32,6 @@ set -uo pipefail
 # evaluated by the interactive-ish shell running this script, not by cron's stripped one.
 # Override any of them from the environment if the layout differs.
 NODE="${NODE:-$(command -v node || echo /usr/local/bin/node)}"
-RENDER="${RENDER:-$(command -v render || echo /opt/homebrew/bin/render)}"
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOG="${HEALTH_LOG:-$HOME/job-board-health.log}"
 
@@ -52,19 +51,13 @@ DBLINE=$(cd "$REPO" && NODE_ENV=production DATABASE_URL="$DB" PG_STATEMENT_TIMEO
   "$NODE" scripts/health-metrics.js 2>/dev/null | /usr/bin/sed 's/{[^{}]*}//g' | /usr/bin/tr -d '\n')
 [ -z "$DBLINE" ] && DBLINE="db_unreachable"
 
-MEILI=$("$RENDER" logs --resources srv-d9q2p0dbedkc73avqon0 --limit 400 -o json --confirm 2>/dev/null \
-  | /usr/bin/sed 's/\\u001b\[[0-9;]*m//g' \
-  | /usr/bin/grep -oE 'time\.idle=[0-9.]+(ms|s|µs)' | /usr/bin/sed 's/time.idle=//' \
-  | /usr/bin/awk '/µs$/{sub("µs","");print $0/1000;next} /s$/&&!/ms$/{sub("s","");print $0*1000;next}{sub("ms","");print}' \
-  | /usr/bin/sort -n \
-  | /usr/bin/awk '{a[NR]=$1} END{if(NR)printf "p50=%.0f p90=%.0f max=%.0f",a[int(NR*.5)],a[int(NR*.9)],a[NR]; else printf "p50=? p90=? max=?"}')
-
-# Bounded to the last hour. An unbounded query returns its own --limit and reports the cap as if
-# it were a count, which is how this metric lied once already.
-WIN=$(/bin/date -u -r $(( $(/bin/date -u +%s) - 3600 )) '+%Y-%m-%dT%H:%M:%SZ')
-FB=$("$RENDER" logs --resources srv-d9q9serm8hqs73e9uio0 --start "$WIN" --text "falling back" \
-  --limit 400 -o json --confirm 2>/dev/null | /usr/bin/grep -c '"timestamp"')
-[ "${FB:-0}" -ge 400 ] && FB=">=400"
+# Meili latency and fallbacks used to come from `render logs` on the services that held the API
+# and the index. Those were suspended when the board moved to the Coolify VPS on 2026-09-25, so
+# for five weeks this logged an empty latency and fallbacks_1h=0 whatever the board was doing,
+# and 0 is what the alarm looks like when all is well. The logs are in Coolify now, which this
+# machine cannot read, so these say they are unknown rather than pass for a measurement.
+MEILI="p50=? p90=? max=?"
+FB="unknown"
 
 CRAWLERS=$(/bin/ps -Ao pid=,ppid=,command= | /usr/bin/grep 'crawl-companies-local.js' | /usr/bin/grep -v grep | /usr/bin/awk '$2!=1' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
 PRUNERS=$(/bin/ps -Ao pid=,ppid=,command= | /usr/bin/grep 'prune-dead-jobs-local' | /usr/bin/grep -v grep | /usr/bin/awk '$2!=1' | /usr/bin/wc -l | /usr/bin/tr -d ' ')

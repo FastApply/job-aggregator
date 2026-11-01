@@ -107,7 +107,7 @@ Two fields matter most:
 
 | field | meaning |
 |---|---|
-| `fallbacks_1h` | searches that gave up on Meilisearch and hit Postgres. **This is the alarm.** It is the mechanism that took the board down on 2026-08-20. Sustained non-zero needs attention; latency alone does not reach users. |
+| `fallbacks_1h` | searches that gave up on Meilisearch and hit Postgres. Logs `unknown` since the move to Coolify: those logs are not readable from this machine, so check them in Coolify. **This is the alarm.** It is the mechanism that took the board down on 2026-08-20. Sustained non-zero needs attention; latency alone does not reach users. |
 | `absent3` | jobs about to be auto-retired. Should drift *down*. If it climbs steadily, the absence signal has drifted — switch `SYNC_ABSENCE_REMOVAL` off in the launcher. |
 
 ### `job-roles.js` — shared vocabulary (library, not a script)
