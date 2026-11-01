@@ -146,10 +146,11 @@ async function runDeadPrune() {
   // backlog. Concurrency stays at 10: checkUrl buffers each body twice and this shares 512MB
   // with the 224MB-capped crawler child.
   //
-  // partitionMod/Remainder set explicitly. This ran unpartitioned, harmless only because the
-  // local runner was down — that runner claims the ODD ids, so an unpartitioned Render would
-  // re-verify everything it checks, doubling outbound traffic to third-party career pages.
-  try { const r = await pruneDeadJobs({ limit: 5000, concurrency: 10, tailDays: 30, recheckDays: 14, partitionMod: 2, partitionRemainder: 0 }); if (r.checked) logger.info(r, 'dead-job pruning'); }
+  // Every id, no partition. This claimed the EVEN half while a local runner owned the ODD one,
+  // and that runner's launch agent has been disabled since 2026-09-15. Sampled 2026-11-01: 0 of 2,285
+  // odd-id live jobs checked in 14 days, 71% of even ones ever checked. The batch size is the
+  // same, so outbound traffic is unchanged.
+  try { const r = await pruneDeadJobs({ limit: 5000, concurrency: 10, tailDays: 30, recheckDays: 14 }); if (r.checked) logger.info(r, 'dead-job pruning'); }
   catch (e) { logger.error({ err: e.message }, 'dead-job pruning error'); }
   setTimeout(runDeadPrune, 20 * 60 * 1000);
 }
