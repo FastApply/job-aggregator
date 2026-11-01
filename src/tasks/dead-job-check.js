@@ -11,6 +11,9 @@
  * alone and simply re-checked on a later rotation.
  */
 
+const { parseWorkdayUrl, workdayCxsUrl } = require('../utils/workday-url');
+const { parseOracleUrl, oracleDetailUrl } = require('../utils/oracle-url');
+
 const DEAD_INDICATORS = [
   'this job posting is no longer available',
   'this position has been filled',
@@ -42,8 +45,187 @@ function lastPathSegment(u) {
   } catch { return null; }
 }
 
+/**
+ * True when a non-200 CXS answer is Workday's own error for a missing posting: 403 with
+ * `S22`, or 404/410 with any Workday `errorCode`. Workday repeats the status in the body as
+ * `httpStatus`; an answer that disagrees with itself is not the resource we asked.
+ */
+function readWorkdayError(status, body) {
+  if (!body || typeof body !== 'object') return false;
+  const { errorCode, httpStatus } = body;
+  if (typeof errorCode !== 'string' || !errorCode) return false;
+  if (httpStatus !== undefined && Number(httpStatus) !== status) return false;
+  if (status === 403) return errorCode === 'S22';
+  return status === 404 || status === 410;
+}
+
+// Workday career pages are a JavaScript SPA: the server returns 200 with an app shell for EVERY
+// path, live or dead, and renders "job not found" client-side. So the generic HTML check below
+// is structurally blind to them — no 404, no dead-page phrase, no redirect off the posting. It
+// called every dead Workday posting alive, forever. Measured 2026-08-17: 46.7% of our 1.15M live
+// Workday rows were already gone from their boards, roughly half a million stale listings.
+//
+// The CXS JSON endpoint behind the SPA does answer honestly, so we ask that instead:
+//
+//   200 + jobPostingInfo                         -> live
+//   403 with Workday's errorCode S22             -> gone
+//   404 / 410 with any Workday errorCode         -> gone
+//   anything else (an HTML 403 from an edge too) -> uncertain, leave it alone
+//
+// Only Workday's own JSON error reads as gone, the same reading the backend's apply pre-flight
+// uses (workday/requisition-probe.ts there). A WAF or edge block answers 403 in HTML, and a bare
+// 403 would delete a live job for every user. Measured 2026-11-01 on 400 Workday rows the board
+// served to First Apply's starved searches: 173 answered 403 S22, none answered a 403 without it.
+//
+// 403 meaning "gone" rather than "blocked" was not assumed — it was tested four ways before
+// being wired to an irreversible write:
+//   1. Live postings on the same tenant/site return 200 with a full description, no cookies or
+//      special headers, so 403 is not a bot block on us (tenant `aep`).
+//   2. 57 of 57 403s re-probed three times each stayed 403 — not rate limiting or an edge blip.
+//   3. A correctly-formed path 403s identically to a malformed one, so it is not a path bug.
+//   4. Searching the tenant's own live listing by requisition id returns total 0 for them —
+//      cisco 2014378, hitachi R0134337, trimble R56765, usbank 2026-0017174 are all off-board.
+//
+// 422 is deliberately NOT fatal: it means the site slug did not resolve, which is a fact about
+// our stored URL rather than about the posting.
+async function checkWorkdayUrl(url) {
+  const p = parseWorkdayUrl(url);
+  if (!p) return null; // not a Workday posting URL — caller falls back to the generic check
+  try {
+    const res = await fetch(workdayCxsUrl(p), {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.status === 403 || res.status === 404 || res.status === 410) {
+      let body = null;
+      try { body = await res.json(); } catch { /* HTML or empty: not Workday answering */ }
+      return readWorkdayError(res.status, body)
+        ? { alive: false, reason: `workday cxs HTTP ${res.status} ${body.errorCode}` }
+        : { alive: null, reason: `workday cxs HTTP ${res.status} without Workday's error` };
+    }
+    if (!res.ok) return { alive: null, reason: `workday cxs HTTP ${res.status}` };
+    const detail = await res.json();
+    // A 200 that carries no jobPostingInfo is not evidence either way.
+    return detail?.jobPostingInfo
+      ? { alive: true, reason: null }
+      : { alive: null, reason: 'workday cxs 200 without jobPostingInfo' };
+  } catch (err) {
+    return { alive: null, reason: `workday cxs ${err.name === 'AbortError' ? 'timeout' : err.message}` };
+  }
+}
+
+/**
+ * Oracle Candidate Experience postings, checked against the REST API rather than the page.
+ *
+ * The generic HTML check is STRUCTURALLY BLIND here, exactly the way it was for Workday. Oracle's
+ * Candidate Experience UI is a Knockout.js single-page app: it answers HTTP 200 for every path
+ * under the site, including requisitions that closed months ago, and renders "job not found"
+ * client-side after the fetch. So `checkUrl` saw 200, found no dead-page phrase in a shell page
+ * that contains no job text at all, and called every one of them alive.
+ *
+ * The API is unambiguous. `finder=ById` on a live requisition returns items=1 with the full
+ * description; on a retired one it returns HTTP 200 with an EMPTY items array. Measured
+ * 2026-08-24 across 40 live oraclecloud rows missing a description: 37 gone, 1 live, 2 network
+ * errors — and the tenants were serving normally throughout (the same endpoint returned a
+ * 7,916-character description for a current requisition on the very same site).
+ *
+ * `items: []` is therefore treated as dead, but ONLY on a clean 200 carrying a well-formed items
+ * array. A non-200, a malformed body, or any network error stays uncertain: this function can
+ * delete rows, and every ambiguous answer has to fall on the side of keeping the job.
+ */
+async function checkOracleUrl(url) {
+  const p = parseOracleUrl(url);
+  if (!p) return null; // not an Oracle CE posting URL — caller falls back to the generic check
+  try {
+    const res = await fetch(oracleDetailUrl(p), {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.status === 404 || res.status === 410) {
+      return { alive: false, reason: `oracle ce HTTP ${res.status}` };
+    }
+    if (!res.ok) return { alive: null, reason: `oracle ce HTTP ${res.status}` };
+
+    let detail;
+    try { detail = await res.json(); }
+    catch { return { alive: null, reason: 'oracle ce 200 with unparseable body' }; }
+
+    // Only an actual array proves the API answered the question. A 200 whose body has no items
+    // key at all is a different response shape than the one measured, so it stays uncertain.
+    if (!Array.isArray(detail?.items)) {
+      return { alive: null, reason: 'oracle ce 200 without an items array' };
+    }
+    return detail.items.length
+      ? { alive: true, reason: null }
+      : { alive: false, reason: 'oracle ce requisition no longer returned' };
+  } catch (err) {
+    return { alive: null, reason: `oracle ce ${err.name === 'AbortError' ? 'timeout' : err.message}` };
+  }
+}
+
+/**
+ * SmartRecruiters postings, asked of the public Posting API rather than the page.
+ *
+ * A closed SmartRecruiters posting keeps its job ad up with a disabled "Sorry, this job has
+ * expired" button. The generic page check reads most of those from the expired text (29 of 30
+ * on 2026-11-01), but DataDome fronts these hosts and answers a bot with 403/404, which leaves
+ * the page check unsure. The Posting API (`api.smartrecruiters.com/v1/companies/<co>/postings/<id>`)
+ * is not behind DataDome, costs one small JSON read instead of a page, and names a closed
+ * posting `active: false` — the same reading the backend's apply pre-flight uses
+ * (JobLivenessService.checkSmartRecruiters): 37 of 37 expired postings answered it, 40 of 40
+ * submitted the same day answered `active: true`. Measured 2026-11-01 on 200 SmartRecruiters
+ * rows the board served to First Apply's starved searches: 63 answered `active: false`, and
+ * the API agreed with the page on every one the page could read.
+ *
+ * Gone only on a 200 JSON posting that names itself inactive. A 404 (a posting id the API does
+ * not know), a rate limit, or a body that is not a posting is no opinion, and the generic check
+ * still runs.
+ */
+const SR_HOSTS = new Set(['jobs.smartrecruiters.com', 'smartrecruiters.com', 'www.smartrecruiters.com']);
+
+function smartRecruitersPostingApi(url) {
+  try {
+    const u = new URL(url);
+    if (!SR_HOSTS.has(u.hostname.toLowerCase())) return null;
+    const [company, slug] = u.pathname.split('/').filter(Boolean);
+    const id = /^(\d{6,})/.exec(slug || '')?.[1];
+    if (!company || !id) return null;
+    return `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(company)}/postings/${id}`;
+  } catch { return null; }
+}
+
+async function checkSmartRecruitersUrl(url) {
+  const api = smartRecruitersPostingApi(url);
+  if (!api) return null;
+  try {
+    const res = await fetch(api, {
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.status !== 200) return null;
+    let body = null;
+    try { body = await res.json(); } catch { return null; }
+    if (!body || typeof body !== 'object' || body.id === undefined) return null;
+    if (body.active === false) return { alive: false, reason: 'smartrecruiters posting inactive' };
+    if (body.active === true) return { alive: true, reason: null };
+    return null;
+  } catch { return null; }
+}
+
 // Returns { alive: true|false|null, reason }. null = uncertain (do NOT prune).
 async function checkUrl(url) {
+  const wd = await checkWorkdayUrl(url);
+  if (wd) return wd;
+
+  // Before the generic HTML path, for the same reason as Workday: this platform's page returns
+  // 200 whether or not the job exists, so the HTML check cannot answer the question.
+  const oc = await checkOracleUrl(url);
+  if (oc) return oc;
+
+  const sr = await checkSmartRecruitersUrl(url);
+  if (sr) return sr;
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
@@ -266,4 +448,4 @@ async function pruneDeadJobs({
   return { checked: jobs.length, dead: deadIds.length, uncertain };
 }
 
-module.exports = { DEAD_INDICATORS, checkUrl, runWithConcurrency, pruneDeadJobs, readCandidates, resetSweepPosition };
+module.exports = { DEAD_INDICATORS, checkUrl, checkOracleUrl, checkWorkdayUrl, checkSmartRecruitersUrl, readWorkdayError, smartRecruitersPostingApi, runWithConcurrency, pruneDeadJobs, readCandidates, resetSweepPosition };
