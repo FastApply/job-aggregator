@@ -272,7 +272,8 @@ const REMOTE_STATEMENT = new RegExp([
   `(?<!(?:${WEEK_DAY})\\s*(?:[-–—:]\\s*)?)\\bwfh\\b(?!\\s+(?:option|day|days|flex\\w*|policy|allowance|stipend))`,
   // "work remotely", "can work fully remote", "working from home". Not "work with remote teams",
   // a stipend for it, or a few days of it ("work remotely up to 2 days a week").
-  '\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))',
+  // Nor a perk: "the option to work from home" (Frequentis, an office job in Vienna, 2026-10-31).
+  '(?<!\\b(?:option|ability|possibility|opportunity|chance|flexibility)\\s+to\\s)\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))',
   // "Location: Remote", "Location : India, Remote", "Work Arrangement: Fully remote", "Position Type: Full-Time, Remote".
   '\\b(?:location|workplace|arrangement|set-?up|working\\s+conditions|work\\s+(?:mode|model|style|type|schedule)|position\\s+type|job\\s+type)\\s*(?:\\([^)]*\\))?\\s*[:;\\-–—]?\\s*(?:[\\w .,/&\\-]{0,30}[,:/|\\-–—]\\s*)?remote\\b(?!\\s+(?:sites?|locations?|areas?))',
   // Workday's field: "Remote Type - Remote"; "Remote Type: On-site" reads as on-site below.
