@@ -137,10 +137,44 @@ const PLACE_MIN_SHARE = 0.3;
 const placeCountryCache = new Map();
 const placeKey = (term) => String(term).trim().toLowerCase().replace(/\s+/g, ' ');
 
+/**
+ * The candidate's own city and country, `home=London|Canada`, or null.
+ *
+ * A bare city is searched everywhere it exists, so a candidate in London, Ontario who picked
+ * "London" got London, UK: 18 of 26 rows on a procurement search, and the First Apply match
+ * refuses every one in code. Narrowing the element to "London|Canada" removes them but also
+ * loses the home country's own postings that state no country ("Bangalore", "AE - Dubai",
+ * "Bengaluru, KA" index with no location_countries): 11 -> 5 rows for Bengaluru, 64 -> 49 for
+ * Dubai (supply loop, 2026-11-01). So a location element that IS the home city keeps postings in
+ * the home country AND postings whose country is unknown, and drops only the ones the index knows
+ * are elsewhere. A caller that does not send `home` (and a board that predates it) gets the bare
+ * city, as before.
+ */
+function homePlace(filters) {
+  if (!filters.home) return null;
+  const parts = String(filters.home).split('|').map((x) => x.trim()).filter(Boolean);
+  if (parts.length !== 2) return null;
+  const country = resolveTerm(parts[1]);
+  if (!country.isCountry) return null;
+  return { key: placeKey(parts[0]), place: parts[0], codes: country.codes, clauses: country.clauses };
+}
+
+/** The home city's group: the place, in the home country or in no known country. */
+function homeGroup(home) {
+  const place = [...new Set(clausesForPlace(home.place))].join(' OR ');
+  const where = [...home.clauses, 'location_countries IS EMPTY', 'NOT location_countries EXISTS'].join(' OR ');
+  return `((${place}) AND (${where}))`;
+}
+
+/** Location elements other than the home city, which carries its own country. */
+const isHomeElement = (home, raw) => !!home && placeKey(raw) === home.key;
+
 /** Every comma- or pipe-separated term the caller sent as a location. */
 function locationTerms(filters) {
   const raw = filters.location == null ? [] : Array.isArray(filters.location) ? filters.location : [filters.location];
-  return raw.flatMap((r) => String(r).split(/[,|]/)).map((t) => t.trim()).filter(Boolean);
+  const home = homePlace(filters);
+  return raw.filter((r) => !isHomeElement(home, r))
+    .flatMap((r) => String(r).split(/[,|]/)).map((t) => t.trim()).filter(Boolean);
 }
 
 /** Remote is asked for, alone or among other modes, and not already "anywhere in the world". */
@@ -192,10 +226,17 @@ async function withPlaceCountries(filters) {
  * Needs at least one place that resolved to a country; countries the caller named are kept.
  */
 function remoteCountries(filters) {
-  const known = filters._placeCountries;
-  if (!known || !wantsRemoteWidening(filters)) return null;
+  if (!wantsRemoteWidening(filters)) return null;
+  const known = filters._placeCountries || {};
   const codes = new Set();
   let fromPlace = false;
+  // The home city widens to the home country, never to the namesake's (London -> ca, not gb).
+  const home = homePlace(filters);
+  const raws = filters.location == null ? [] : Array.isArray(filters.location) ? filters.location : [filters.location];
+  if (home && raws.some((r) => isHomeElement(home, r))) {
+    fromPlace = true;
+    home.codes.forEach((c) => codes.add(c));
+  }
   for (const term of locationTerms(filters)) {
     const r = resolveTerm(term);
     if (r.isCountry) r.codes.forEach((c) => codes.add(c));
@@ -426,7 +467,11 @@ function buildFilter(filters = {}) {
 
   const rawLocations = filters.location == null ? []
     : Array.isArray(filters.location) ? filters.location : [filters.location];
-  const groups = rawLocations.flatMap((raw) => (String(raw).trim() ? groupsForElement(raw) : []));
+  const home = homePlace(filters);
+  const groups = rawLocations.flatMap((raw) => {
+    if (!String(raw).trim()) return [];
+    return isHomeElement(home, raw) ? [homeGroup(home)] : groupsForElement(raw);
+  });
   if (groups.length) {
     const locClause = `(${groups.join(' OR ')})`;
     const widen = remoteCountries(filters);

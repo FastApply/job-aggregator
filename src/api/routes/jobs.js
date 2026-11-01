@@ -74,6 +74,9 @@ function formatJob(row, includeDescription = false) {
  *   remote           - true (only fully remote jobs, indexed)
  *   remote_worldwide - true (remote jobs open to any location globally)
  *   visa             - yes | no (H1B/visa sponsorship filter)
+ *   home             - City|Country: the searcher's own city. A location element equal to City
+ *                      keeps postings in Country or with no known country (London|Canada drops
+ *                      London, UK). Ignored on the Postgres fallback.
  *   company_id       - Filter by company ID (single)
  *   limit            - Results per page (default 50, max 200)
  *   page             - Page number (1-based, alternative to offset)
@@ -96,6 +99,9 @@ router.get('/api/jobs', async (req, res) => {
   // apply paths, whose match verdict reads the posting). See buildFilter.
   if (req.query.include_unlabeled) filters.includeUnlabeled = req.query.include_unlabeled;
   if (req.query.location) filters.location = req.query.location;
+  // `home=City|Country`: the candidate's own city, when it is also one of the locations. That
+  // element keeps postings in the home country or in none, never a namesake abroad (buildFilter).
+  if (typeof req.query.home === 'string') filters.home = req.query.home;
   // Canonical param is `posted`; accept `posted_after` and `datePosted` as aliases because
   // different deployed frontends send different names (Browse-and-apply v2 on `main` sends
   // `datePosted`, an older build sent `posted_after`). All take the same Nh/Nd/Nw/Nm value.
