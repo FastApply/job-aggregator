@@ -1,3 +1,5 @@
+const { withoutRemoteBoilerplate } = require('./remote-boilerplate');
+
 /**
  * Extraction utilities for enriching job data from descriptions.
  * Extracts salary, workplace type, and employment type from free text.
@@ -267,7 +269,11 @@ const REMOTE_STATEMENT = new RegExp([
   // fully remote / 100% remote, unless what follows shows it is about other jobs.
   '\\b(?:fully|100\\s?%|completely|entirely|permanently|exclusively|totally)[\\s-]+remote(?:ly)?\\b(?!\\s+(?:positions|roles|jobs|employees|workers|staff|status)\\b)',
   '\\bremote\\s+(?:working\\s+)?(?:position|role|job|opportunity|assignment|contract|employee|worker|based)\\b(?!\\s+sites?\\b)',
-  '\\bremote[\\s-](?:first|only)\\b', '\\ball[\\s-]remote\\b', '#li-remote\\b', '\\bwork\\s+from\\s+anywhere\\b',
+  '\\bremote[\\s-](?:first|only)\\b',
+  // Not the people: "overseeing ... all remote employees reporting to that office" (Vega, an
+  // office manager in Newport Beach, CA, applied for a candidate in Indiana, 2026-11-02).
+  '\\ball[\\s-]remote\\b(?!\\s+(?:employees?|workers?|staff|teams?|team\\s+members?|associates?|colleagues|locations?|sites?|offices?))',
+  '#li-remote\\b', '\\bwork\\s+from\\s+anywhere\\b',
   // WFH on its own, not one day of the week ("Wednesday WFH option", "F - WFH").
   `(?<!(?:${WEEK_DAY})\\s*(?:[-–—:]\\s*)?)\\bwfh\\b(?!\\s+(?:option|day|days|flex\\w*|policy|allowance|stipend))`,
   // "work remotely", "can work fully remote", "working from home". Not "work with remote teams",
@@ -291,7 +297,7 @@ const REMOTE_STATEMENT = new RegExp([
 ].join('|'), 'i');
 
 function statesRemote(title, description) {
-  const text = String(description || '').replace(/\s+/g, ' ');
+  const text = withoutRemoteBoilerplate(String(description || '').replace(/\s+/g, ' '));
   if (!text || NOT_REMOTE_EN.test(text) || OFFICE_DAYS.test(text)) return false;
   if (REMOTE_STATEMENT.test(text)) return true;
   // "Ajaia is hiring a remote Product Manager": the word against the job's own title.
