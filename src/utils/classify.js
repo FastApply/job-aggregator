@@ -9,6 +9,7 @@
  */
 
 const { withoutNordicIntern } = require('./nordic-intern');
+const { withoutRemoteBoilerplate } = require('./remote-boilerplate');
 
 // ── Remote Detection ──────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ function classifyRemote(title, location, workplaceType, description) {
   if (wt === 'remote' || wt === 'fully remote' || wt === 'fully_remote') return true;
   if (wt === 'hybrid' || wt === 'on-site' || wt === 'onsite' || wt === 'in-office') return false;
 
-  const text = `${title || ''} ${location || ''} ${description || ''}`;
+  const text = `${title || ''} ${location || ''} ${withoutRemoteBoilerplate(String(description || '').replace(/\s+/g, ' '))}`;
 
   // Check negatives first
   for (const re of REMOTE_NEGATIVE) {
