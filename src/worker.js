@@ -66,6 +66,22 @@ async function main() {
   }
   setTimeout(runClassificationBackfill, 2 * 60 * 1000);
 
+  // Feed rows (Simplify, Wonsulting, LiftMyCV, Jobloo …) take their job type and publish date
+  // from the posting's own ATS, within minutes of whichever script loaded them
+  // (tasks/feed-ats-facts.js). Only rows first seen in the last 48 hours: older rows are
+  // scripts/backfill-feed-ats-facts.js, run by hand. FEED_ATS_FACTS=0 turns it off.
+  async function runFeedAtsFacts() {
+    try {
+      if (process.env.FEED_ATS_FACTS !== '0') {
+        await require('./tasks/feed-ats-facts').refreshFeedAtsFacts({ sinceHours: 48, limit: 200 });
+      }
+    } catch (err) {
+      logger.error({ err: err.message }, 'Feed ATS facts error');
+    }
+    setTimeout(runFeedAtsFacts, 5 * 60 * 1000);
+  }
+  setTimeout(runFeedAtsFacts, 3 * 60 * 1000);
+
   // Clean up stale jobs older than 90 days — runs every 6 hours. (Dead postings
   // younger than this are pruned by liveness checks in runDeadJobPruning below.)
   // Rows with posted_at IS NULL used to be exempt forever (the WHERE clause only
