@@ -68,6 +68,9 @@ async function migrate() {
       -- which left a fresh SQLite DB unable to ingest a single job.
       role_category    TEXT,
       absent_syncs     INTEGER NOT NULL DEFAULT 0,
+      -- When a FEED row's employment_type and posted_at were read (or tried) from its own ATS
+      -- (tasks/feed-ats-facts.js). In the base table for the reason above: the upsert reads it.
+      ats_facts_at     TIMESTAMP,
       -- Annualised, numeric copies of salary_min/max, so salary is filterable at all.
       -- salary_min/max are TEXT (decimals, odd formats), which makes "> 200000" a STRING
       -- comparison where "90000" sorts above "200000"; and the interval varies as widely as the
@@ -300,6 +303,8 @@ async function migrate() {
   // removed, and soft-deletes come through as an ordinary UPDATE of removed_at.
   if (isPostgres) {
     await exec('ALTER TABLE jobs ADD COLUMN IF NOT EXISTS index_dirty_at TIMESTAMP');
+    // Nullable, no default: a catalogue-only change on Postgres, whatever the table's size.
+    await exec('ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ats_facts_at TIMESTAMP');
     // Partial index: only dirty rows are ever scanned, so this stays tiny (it is the work
     // queue, not a copy of the table).
     await exec('CREATE INDEX IF NOT EXISTS idx_jobs_index_dirty ON jobs (index_dirty_at) WHERE index_dirty_at IS NOT NULL');
