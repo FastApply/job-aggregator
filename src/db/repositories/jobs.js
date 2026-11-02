@@ -410,7 +410,11 @@ const jobsRepo = {
             -- list responses carry no description, so their crawl sends NULL here every sync and
             -- would erase the tag backfill-descriptions read from the description afterwards.
             workplace_type = COALESCE(EXCLUDED.workplace_type, jobs.workplace_type),
-            employment_type = EXCLUDED.employment_type,
+            -- A feed row whose type and date were read from its ATS (ats_facts_at) keeps them:
+            -- the feed re-sends its own values every sync (tasks/feed-ats-facts.js). Rows the
+            -- board crawls itself never carry the mark, so this changes nothing for them.
+            employment_type = CASE WHEN jobs.ats_facts_at IS NOT NULL THEN jobs.employment_type
+                                   ELSE EXCLUDED.employment_type END,
             -- COALESCE, not a plain overwrite. Several ATS (paylocity, workable, ...) carry
             -- no salary in the list response, so the adapter passes NULL every sync — an
             -- unconditional assignment therefore ERASED anything the description/salary
@@ -438,7 +442,7 @@ const jobsRepo = {
                                 AND EXCLUDED.description IS DISTINCT FROM jobs.description
                                THEN EXCLUDED.description ELSE jobs.description END,
             url = EXCLUDED.url,
-            posted_at = EXCLUDED.posted_at,
+            posted_at = CASE WHEN jobs.ats_facts_at IS NOT NULL THEN jobs.posted_at ELSE EXCLUDED.posted_at END,
             raw_data = CASE WHEN EXCLUDED.raw_data IS DISTINCT FROM jobs.raw_data
                             THEN EXCLUDED.raw_data ELSE jobs.raw_data END,
             visa_sponsorship = CASE WHEN EXCLUDED.visa_sponsorship != '' THEN EXCLUDED.visa_sponsorship ELSE jobs.visa_sponsorship END,
