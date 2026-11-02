@@ -279,7 +279,7 @@ const REMOTE_STATEMENT = new RegExp([
   // "work remotely", "can work fully remote", "working from home". Not "work with remote teams",
   // a stipend for it, or a few days of it ("work remotely up to 2 days a week").
   // Nor a perk: "the option to work from home" (Frequentis, an office job in Vienna, 2026-10-31).
-  '(?<!\\b(?:option|ability|possibility|opportunity|chance|flexibility)\\s+to\\s)\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))',
+  '(?<!\\b(?:option|ability|possibility|opportunity|chance|flexibility)\\s+to\\s)\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri)(?:days?)?\\b)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))',
   // "Location: Remote", "Location : India, Remote", "Work Arrangement: Fully remote", "Position Type: Full-Time, Remote".
   '\\b(?:location|workplace|arrangement|set-?up|working\\s+conditions|work\\s+(?:mode|model|style|type|schedule)|position\\s+type|job\\s+type)\\s*(?:\\([^)]*\\))?\\s*[:;\\-–—]?\\s*(?:[\\w .,/&\\-]{0,30}[,:/|\\-–—]\\s*)?remote\\b(?!\\s+(?:sites?|locations?|areas?))',
   // Workday's field: "Remote Type - Remote"; "Remote Type: On-site" reads as on-site below.
@@ -292,8 +292,10 @@ const REMOTE_STATEMENT = new RegExp([
   '\\bremote\\s*[(\\-–—:|]\\s*(?:us|u\\.s\\.|usa|united\\s+states|uk|united\\s+kingdom|canada|india|europe|emea|apac|latam|latin\\s+america|north\\s+america|anywhere|global|worldwide|nationwide)\\b',
   '\\bremote\\s*\\(\\s*[a-z]', '\\(\\s*remote\\s*\\)', '[–—]\\s*remote\\b(?!\\s+(?:sensing|monitoring|access|support))',
   '\\bremote\\s+work\\s*:', '\\bcomfort\\s+of\\s+your\\s+(?:own\\s+)?home\\b',
-  // "This role will be remote", "may be filled remotely".
-  '\\b(?:position|role|job)\\s+(?:is|can\\s+be|will\\s+be|may\\s+be|could\\s+be|would\\s+be)\\s+(?:\\w+\\s+){0,2}?(?:remote|(?:performed|done|filled|based|worked)\\s+remotely)\\b',
+  // "This role will be remote", "may be filled remotely". Not "may be eligible for remote work up
+  // to 2 days per week" (City of New York, an office job, 2026-11-02) or "...in select geographic
+  // locations, subject to approval" (PNC): a chance of it is not how the job is worked.
+  '\\b(?:position|role|job)\\s+(?!(?:may|might|could)\\s+be\\s+eligible\\b)(?:is|can\\s+be|will\\s+be|may\\s+be|could\\s+be|would\\s+be)\\s+(?:\\w+\\s+){0,2}?(?:remote|(?:performed|done|filled|based|worked)\\s+remotely)\\b',
 ].join('|'), 'i');
 
 function statesRemote(title, description) {
