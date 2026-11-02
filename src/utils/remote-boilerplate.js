@@ -11,8 +11,16 @@
  */
 const CONDITIONAL_REMOTE = /\b(?:if|unless|whether)\s+(?:this|the|it)\b[^.;!?]{0,70}\bremote\s+(?:position|role|job|opportunity)\b/gi;
 
+/**
+ * A perk with a length, from a benefits list: Altruist's "One month work from anywhere policy" on
+ * a Los Angeles and San Francisco job (Greenhouse names only those two offices) went to a
+ * candidate in Dallas who works remotely only (First Apply, 2026-11-02). "We work from anywhere"
+ * and "Work from anywhere in the US" state how the job is worked and are not touched.
+ */
+const ANYWHERE_PERK = /\b(?:(?:\d+|one|two|three|four|six|eight|twelve)\s+)?(?:months?|weeks?|days?)\s+(?:of\s+|a\s+year\s+)?work\s+from\s+anywhere\b|\bwork\s+from\s+anywhere\s+(?:polic(?:y|ies)|programs?|perks?|benefits?|stipends?|days?|weeks?|months?)\b/gi;
+
 function withoutRemoteBoilerplate(text) {
-  return String(text || '').replace(CONDITIONAL_REMOTE, ' ');
+  return String(text || '').replace(CONDITIONAL_REMOTE, ' ').replace(ANYWHERE_PERK, ' ');
 }
 
 module.exports = { withoutRemoteBoilerplate };

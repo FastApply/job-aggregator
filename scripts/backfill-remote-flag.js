@@ -34,7 +34,7 @@ const { stripHtml } = require('../src/utils/html');
 const { extractWorkplaceType } = require('../src/utils/extract');
 const { classifyJob } = require('../src/utils/classify');
 
-const REMOTE_WORD = /\bremote(?:ly)?\b|\bwork from home\b|\bwfh\b/i;
+const REMOTE_WORD = /\bremote(?:ly)?\b|\bwork from (?:home|anywhere)\b|\bwfh\b/i;
 
 // Adapters that set workplace_type to null, or only from the title/location (src/adapters/*.js).
 // BambooHR and UKG send a work model on some rows, and both are crawled on schedule, so a tag the

@@ -88,7 +88,9 @@ function classifyRemote(title, location, workplaceType, description) {
 
 const WORLDWIDE_POSITIVE = [
   /\banywhere\s*in\s*the\s*world\b/i,
-  /\bwork\s*from\s*anywhere\b/i,
+  // Not "Work from anywhere in the US": Financial Planner Recruiting's row, no location, stored
+  // worldwide and applied for a candidate in Mexico City (2026-11-02).
+  /\bwork\s*from\s*anywhere\b(?!\s*(?:in|within|across)\b(?!\s*the\s*world\b))/i,
   /\blocation\s*agnostic\b/i,
   /\bglobally\s*distributed\b/i,
   /\bfully\s*distributed\b/i,
