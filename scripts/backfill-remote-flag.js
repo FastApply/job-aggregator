@@ -37,9 +37,12 @@ const { classifyJob } = require('../src/utils/classify');
 const REMOTE_WORD = /\bremote(?:ly)?\b|\bwork from home\b|\bwfh\b/i;
 
 // Adapters that set workplace_type to null, or only from the title/location (src/adapters/*.js).
+// BambooHR and UKG send a work model on some rows, and both are crawled on schedule, so a tag the
+// ATS itself states comes back on the next crawl; every other row of theirs is the old word reader.
 const NO_WORK_MODEL = [
   'greenhouse', 'workday', 'successfactors', 'taleo', 'avature', 'brassring', 'personio',
   'reachmee', 'varbi', 'visma', 'adp', 'adp_workforcenow', 'manatal', 'silkroad', 'jazzhr', 'jobvite',
+  'bamboohr', 'ukg',
 ];
 
 /** Pure. The row's new tags, or null when it stays as stored. */
