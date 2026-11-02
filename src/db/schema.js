@@ -221,6 +221,9 @@ async function migrate() {
   // removed, and soft-deletes come through as an ordinary UPDATE of removed_at.
   if (isPostgres) {
     await exec('ALTER TABLE jobs ADD COLUMN IF NOT EXISTS index_dirty_at TIMESTAMP');
+    // When a FEED row's employment_type and posted_at were read (or tried) from its own ATS
+    // (tasks/feed-ats-facts.js). Nullable, no default: a catalogue-only change on Postgres.
+    await exec('ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ats_facts_at TIMESTAMP');
     // Partial index: only dirty rows are ever scanned, so this stays tiny (it is the work
     // queue, not a copy of the table).
     await exec('CREATE INDEX IF NOT EXISTS idx_jobs_index_dirty ON jobs (index_dirty_at) WHERE index_dirty_at IS NOT NULL');
