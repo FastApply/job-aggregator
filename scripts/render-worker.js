@@ -311,3 +311,17 @@ async function runBoardSeeding() {
   setTimeout(runBoardSeeding, 24 * 60 * 60 * 1000);
 }
 if (process.env.BOARD_SEED !== '0') setTimeout(runBoardSeeding, 20 * 60 * 1000);
+
+// Feed rows (Simplify, Wonsulting, LiftMyCV, Jobloo ...) take their job type and publish date
+// from the posting's own ATS, within minutes of whichever script loaded them
+// (src/tasks/feed-ats-facts.js). The same loop as src/worker.js, which this process does not
+// run: without it only the upsert's keep-the-ATS-values rule and the hand-run backfill were live.
+// Only rows first seen in the last 48 hours; FEED_ATS_FACTS=0 turns it off.
+async function runFeedAtsFacts() {
+  if (shuttingDown) return;
+  try {
+    await require('../src/tasks/feed-ats-facts').refreshFeedAtsFacts({ sinceHours: 48, limit: 200 });
+  } catch (e) { logger.error({ err: e.message }, 'feed ATS facts error'); }
+  setTimeout(runFeedAtsFacts, 5 * 60 * 1000);
+}
+if (process.env.FEED_ATS_FACTS !== '0') setTimeout(runFeedAtsFacts, 3 * 60 * 1000);
