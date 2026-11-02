@@ -6,7 +6,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { feedOf, atsFactsSource, factsFromBody, fetchAtsFacts, ATS_WITH_FACTS } = require('../src/utils/ats-posting-facts');
+const { feedOf, atsFactsSource, factsFromBody, fetchAtsFacts, ATS_WITH_FACTS, clearBoardCache } = require('../src/utils/ats-posting-facts');
 const { refreshFeedAtsFacts, selectBatch, changesOf, keepInternship } = require('../src/tasks/feed-ats-facts');
 
 const facts = (ats, url, body) => factsFromBody(atsFactsSource(ats, url), body);
@@ -78,12 +78,50 @@ test('JazzHR and Jobvite from the page; BambooHR from its detail resource', () =
   });
 });
 
-test('no source for an ATS without a per-posting resource, or a URL that is not a posting', () => {
-  assert.equal(atsFactsSource('ashby', 'https://jobs.ashbyhq.com/example/63d7d126-efaf-4a48-b328-f8d85b640ebf'), null);
+test('no source for iCIMS (apply path off), or a URL that is not a posting', () => {
   assert.equal(atsFactsSource('icims', 'https://careers-example.icims.com/jobs/1234/job'), null);
   assert.equal(atsFactsSource('workday', 'https://example.wd1.myworkdayjobs.com/external'), null);
   assert.equal(atsFactsSource('smartrecruiters', 'https://simplify.jobs/p/abc'), null);
-  assert.ok(!ATS_WITH_FACTS.includes('ashby'));
+  assert.equal(atsFactsSource('zoho', 'https://example.zohorecruit.com/jobs/Careers'), null);
+  assert.ok(!ATS_WITH_FACTS.includes('icims'));
+});
+
+test('Ashby and Zoho: one board fetch serves every posting on it; a closed posting is null', async () => {
+  clearBoardCache();
+  const calls = [];
+  const fetchImpl = async (api) => {
+    calls.push(api);
+    return {
+      ok: true,
+      json: async () => ({ jobs: [{ id: 'A973E82F-0253-469A-810A-E4BF32C870E8', employmentType: 'PartTime', publishedAt: '2025-01-02T00:00:00.000+00:00' }, { id: '30b9e668-658b-47f8-b641-d83490f9ae47', employmentType: 'Intern', publishedAt: null }] }),
+    };
+  };
+  const base = 'https://jobs.ashbyhq.com/example/';
+  assert.deepEqual(await fetchAtsFacts('ashby', `${base}a973e82f-0253-469a-810a-e4bf32c870e8/application?embed=true`, { fetchImpl }), { employment_type: 'Part-time', posted_at: '2025-01-02T00:00:00.000Z' });
+  assert.deepEqual(await fetchAtsFacts('ashby', `${base}30b9e668-658b-47f8-b641-d83490f9ae47`, { fetchImpl }), { employment_type: 'Internship', posted_at: null });
+  assert.equal(await fetchAtsFacts('ashby', `${base}00000000-0000-4000-8000-000000000000`, { fetchImpl }), null);
+  assert.deepEqual(calls, ['https://api.ashbyhq.com/posting-api/job-board/example']);
+
+  const jobs = [{ id: '683574000020120075', Job_Type: 'Part time', Date_Opened: '2025-03-01' }];
+  const page = `<input type="hidden" id="jobs" value="${JSON.stringify(jobs).replace(/"/g, '&#34;')}">`;
+  const zcalls = [];
+  const zfetch = async (api) => { zcalls.push(api); return { ok: true, text: async () => page }; };
+  for (const url of ['https://example.zohorecruit.com/jobs/Careers/683574000020120075/Analyst', 'https://example.zohorecruit.com/recruit/PortalDetail.na?iframe=true&jobid=683574000020120075']) {
+    assert.deepEqual(await fetchAtsFacts('zoho', url, { fetchImpl: zfetch }), { employment_type: 'Part-time', posted_at: '2025-03-01T00:00:00.000Z' });
+  }
+  assert.deepEqual(zcalls, ['https://example.zohorecruit.com/jobs/Careers']);
+  clearBoardCache();
+});
+
+test('Pinpoint from the page (type and date); Paylocity from the page (date only)', () => {
+  assert.deepEqual(facts('pinpoint', 'https://example.pinpointhq.com/en/postings/2c87bfba-96a1-4a6a-ba06-f26cf64fcf6b', ld({ employmentType: 'FULL_TIME', datePosted: '2026-10-27T00:40:20+00:00' })), {
+    employment_type: 'Full-time',
+    posted_at: '2026-10-27T00:40:20.000Z',
+  });
+  assert.deepEqual(facts('paylocity', 'https://recruiting.paylocity.com/Recruiting/Jobs/Details/3554197', ld({ datePosted: '2026-10-15T21:17:56-05:00' })), {
+    employment_type: null,
+    posted_at: '2026-10-16T02:17:56.000Z',
+  });
 });
 
 test('a fetch that fails, or a posting that states nothing, is null', async () => {

@@ -17,8 +17,10 @@
  * When the board also crawls the posting from the ATS, the feed row is a twin and is dropped
  * (feed-twins.js). This covers the rest: feed rows with no direct row. Each reader below uses
  * the same field the board's own adapter for that ATS reads, so a corrected feed row says what a
- * direct row would. ATSs with no public per-posting resource (Ashby's API lists a whole board,
- * iCIMS, Paylocity) are not read.
+ * direct row would. Ashby and Zoho answer only for a whole board: it is fetched once, kept as an
+ * id -> facts index for an hour, and the posting picked out by id. Pinpoint and Paylocity are
+ * read from the posting page's JSON-LD (Paylocity states no type anywhere). iCIMS is not read:
+ * FastApply's iCIMS apply path is switched off.
  */
 const { parseWorkdayUrl, workdayCxsUrl } = require('./workday-url');
 const { parseOracleUrl, oracleDetailUrl } = require('./oracle-url');
@@ -62,6 +64,16 @@ function jobPostingLd(html) {
 function ldType(v) {
   const list = (Array.isArray(v) ? v : [v]).map(str).filter(Boolean);
   return list.length === 1 ? list[0].replace(/_/g, '-') : null;
+}
+
+const ASHBY_TYPE = { fulltime: 'Full-time', parttime: 'Part-time', contract: 'Contract', intern: 'Internship', temporary: 'Temporary' };
+
+/** Zoho's careers page carries every opening as JSON in <input id="jobs" value="…"> (adapters/zoho.js). */
+function zohoJobsInput(html) {
+  const m = /<input[^>]*\bid="jobs"[^>]*\bvalue="([^"]*)"/i.exec(html) || /<input[^>]*\bvalue="([^"]*)"[^>]*\bid="jobs"/i.exec(html);
+  if (!m) return [];
+  const decoded = m[1].replace(/&#34;|&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  try { const parsed = JSON.parse(decoded); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
 }
 
 const WORKABLE_TYPE = { full: 'Full-time', part: 'Part-time', contract: 'Contract', temporary: 'Temporary', internship: 'Internship' };
@@ -161,17 +173,65 @@ function atsFactsSource(ats, url) {
         },
       };
     }
+    case 'ashby': {
+      if (host !== 'jobs.ashbyhq.com' || !p[0] || !/^[0-9a-f-]{36}$/i.test(p[1] || '')) return null;
+      return {
+        api: `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(p[0])}`,
+        board: {
+          id: p[1].toLowerCase(),
+          index: (j) => new Map((Array.isArray(obj(j).jobs) ? obj(j).jobs : []).map((x) => [
+            str(obj(x).id).toLowerCase(),
+            { type: ASHBY_TYPE[str(obj(x).employmentType).toLowerCase()] || null, date: iso(obj(x).publishedAt) },
+          ])),
+        },
+      };
+    }
+    case 'zoho': {
+      if (!/^[a-z0-9-]+\.zohorecruit\.(com|in|eu|com\.au|jp|com\.cn)$/.test(host)) return null;
+      const id = u.searchParams.get('jobid') || (p[0] === 'jobs' ? (/^\d{10,}$/.test(p[1] || '') ? p[1] : p[2]) : null);
+      if (!id || !/^\d{10,}$/.test(id)) return null;
+      return {
+        api: `https://${host}/jobs/Careers`,
+        html: true,
+        board: {
+          id,
+          index: (h) => new Map(zohoJobsInput(h).map((x) => [str(obj(x).id), { type: str(obj(x).Job_Type), date: iso(obj(x).Date_Opened) }])),
+        },
+      };
+    }
+    case 'pinpoint': {
+      if (!/^[a-z0-9-]+\.pinpointhq\.com$/.test(host)) return null;
+      const id = p[p.indexOf('postings') + 1];
+      if (p.indexOf('postings') < 0 || !/^[0-9a-f-]{36}$/i.test(id || '')) return null;
+      // postings.json (what the adapter reads) has no publish date; the page's JSON-LD has both.
+      return {
+        api: `https://${host}/postings/${id}`,
+        html: true,
+        read: (h) => { const ld = jobPostingLd(h); return { type: ldType(ld.employmentType), date: iso(ld.datePosted) }; },
+      };
+    }
+    case 'paylocity': {
+      if (host !== 'recruiting.paylocity.com') return null;
+      const at = p.findIndex((x) => x.toLowerCase() === 'details');
+      const id = at >= 0 ? p[at + 1] : null;
+      if (!/^\d+$/.test(id || '')) return null;
+      return {
+        api: `https://recruiting.paylocity.com/Recruiting/Jobs/Details/${id}`,
+        html: true,
+        read: (h) => ({ type: null, date: iso(jobPostingLd(h).datePosted) }),
+      };
+    }
     default:
       return null;
   }
 }
 
 /** The ATSs atsFactsSource reads, as stored in jobs.ats. */
-const ATS_WITH_FACTS = ['smartrecruiters', 'workable', 'workday', 'greenhouse', 'lever', 'eightfold', 'bamboohr', 'jazzhr', 'jobvite', 'oracle', 'oraclecloud'];
+const ATS_WITH_FACTS = ['smartrecruiters', 'workable', 'workday', 'greenhouse', 'lever', 'eightfold', 'bamboohr', 'jazzhr', 'jobvite', 'oracle', 'oraclecloud', 'ashby', 'zoho', 'pinpoint', 'paylocity'];
 
 /** A source's raw reading as board columns: { employment_type, posted_at }, nulls for unstated. */
 function factsFromBody(source, body) {
-  const { type, date } = source.read(body) || {};
+  const { type, date } = (source.board ? source.board.index(body).get(source.board.id) : source.read(body)) || {};
   return { employment_type: type ? normalizeEmploymentType(type) : null, posted_at: date || null };
 }
 
@@ -179,9 +239,50 @@ function factsFromBody(source, body) {
  * Fetch and read one posting's facts. Resolves null on any failure (unknown ATS, HTTP error,
  * timeout): a miss leaves the row as the feed stored it.
  */
+/** Whole-board answers by board URL, as their id -> facts index: one fetch per board per hour. */
+const boards = new Map();
+const boardsInFlight = new Map();
+const BOARD_TTL_MS = 60 * 60 * 1000;
+const BOARDS_MAX = 300;
+
+async function boardIndex(source, fetchImpl, timeoutMs) {
+  const hit = boards.get(source.api);
+  if (hit && Date.now() - hit.at < BOARD_TTL_MS) return hit.index;
+  let pending = boardsInFlight.get(source.api);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const res = await fetchImpl(source.api, {
+          headers: { Accept: source.html ? 'text/html' : 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; FastApplyBoard/1.0)' },
+          signal: AbortSignal.timeout(Math.max(timeoutMs, 15000)),
+        });
+        if (!res.ok) return null;
+        return source.board.index(source.html ? await res.text() : await res.json());
+      } catch {
+        return null;
+      } finally {
+        boardsInFlight.delete(source.api);
+      }
+    })();
+    boardsInFlight.set(source.api, pending);
+  }
+  const index = await pending;
+  if (!index) return null;
+  if (boards.size >= BOARDS_MAX) boards.delete(boards.keys().next().value);
+  boards.set(source.api, { index, at: Date.now() });
+  return index;
+}
+
 async function fetchAtsFacts(ats, url, { fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
   const source = atsFactsSource(ats, url);
   if (!source || !fetchImpl) return null;
+  if (source.board) {
+    const index = await boardIndex(source, fetchImpl, timeoutMs);
+    const f = index && index.get(source.board.id);
+    if (!f) return null;
+    const facts = { employment_type: f.type ? normalizeEmploymentType(f.type) : null, posted_at: f.date || null };
+    return facts.employment_type || facts.posted_at ? facts : null;
+  }
   try {
     const res = await fetchImpl(source.api, {
       headers: { Accept: source.html ? 'text/html' : 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; FastApplyBoard/1.0)' },
@@ -196,4 +297,7 @@ async function fetchAtsFacts(ats, url, { fetchImpl = globalThis.fetch, timeoutMs
   }
 }
 
-module.exports = { FEEDS, ATS_WITH_FACTS, feedOf, atsFactsSource, factsFromBody, fetchAtsFacts, jobPostingLd };
+/** For tests: forget the cached boards. */
+function clearBoardCache() { boards.clear(); boardsInFlight.clear(); }
+
+module.exports = { FEEDS, ATS_WITH_FACTS, feedOf, atsFactsSource, factsFromBody, fetchAtsFacts, jobPostingLd, clearBoardCache };
