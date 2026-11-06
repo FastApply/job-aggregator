@@ -114,6 +114,7 @@ const { cityAliasGroup } = require('./city-aliases');
 const {
   alpha3Countries, subdivisionCountry, cityCodeCountry, provinceNameCountries,
 } = require('./location-subdivisions');
+const { isUsPlace, placeKey } = require('./us-places');
 
 for (const entry of TABLE.split('|')) {
   const [code, name] = entry.split(':').map((x) => x && x.trim());
@@ -559,6 +560,39 @@ function streetFirst(segments) {
   return segments.length === 3 && /^\d+[a-z]?\s+\S/.test(segments[0]);
 }
 
+/**
+ * "<label>, City, ST": a site, building, campus or neighbourhood, then a town of that US state.
+ *
+ * Greystar writes "Vida at Morgan Hill, Morgan Hill, CA", Atrium Health "Carolinas Medical Center
+ * - 1000 Blythe Blvd, Charlotte, NC", Cinemark "00435 - Century 20 El Con and XD, Tucson, AZ",
+ * others "Streeterville, Chicago, IL". With three or more parts the trailing code is read as a
+ * country, because "Toronto, ON, CA" and "Tel Aviv-Yafo, Tel Aviv District, IL" are; so these
+ * were Canada, New Caledonia, Azerbaijan and Israel. A Canada search returned California jobs, and
+ * a United States search lost them (about 12,000 live rows, supply loop 2026-11-06).
+ *
+ * The part before the code decides: a town of that state (us-places.js, from the Census
+ * Gazetteer, which holds only the states whose code is also a country's, and not DE) is the
+ * state. It is not when the text names a province ("Brampton, Ontario, CA": Ontario is also a
+ * California city), when that part is a country ("Lima, Peru, IN"), when any part is one of the
+ * other country's own cities ("Toronto, San Francisco, CA" stays as it was read before), or when
+ * the text is a list of places with their own codes.
+ */
+function labelCityState(segments, rawText) {
+  if (segments.length < 3) return false;
+  const st = segments[segments.length - 1];
+  const city = placeKey(segments[segments.length - 2]);
+  if (!isUsPlace(st, city) || LOOKUP.has(city)) return false;
+  if (provinceNameCountries(rawText, isUsStateSegment).size) return false;
+  return !segments.slice(0, -1).some((seg) => {
+    const part = placeKey(seg);
+    // Another code before it makes this a list of places ("Boulder, CO, ..., Toronto, ON,
+    // Atlanta, GA"), not one address. The same state repeated ("Store 265 - Huntsville, AL -
+    // Huntsville, AL") is still one.
+    return FOREIGN_BY_CITY_STATE.has(`${part}|${st}`)
+      || (/^[a-z]{2}$/.test(part) && part !== st && part !== 'us');
+  });
+}
+
 function usStateReading(segments, rawText) {
   // Several addresses joined by ";" or "|" share one comma segment: "Toronto, ON, Canada;
   // Chicago, IL, USA". Only the last one belongs to the trailing state.
@@ -617,7 +651,7 @@ function usStateReading(segments, rawText) {
   // the job got no country — the search canary lost it on 2026-10-10.
   const stateOnly = !NAME.has(st);
   if (!usTail && !usHead && end !== 2 && !dashLedCityState(norm(rawText)) && !startsAddress && !stateOnly
-    && !(end === 3 && streetFirst(segments))) return null;
+    && !(end === 3 && streetFirst(segments)) && !labelCityState(segments, rawText)) return null;
   if (usTail || usHead) return reading(US_TERRITORIES.has(st) ? ['us', st] : ['us']);
 
   const rawLast = String(rawText).split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean).pop() || '';
@@ -675,4 +709,10 @@ module.exports.norm = norm;
 module.exports.endsInUsState = (text) => {
   const s = norm(text).replace(/\./g, '');
   return !!s && !!usStateReading(s.split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean), text);
+};
+// Whether this location is one "<label>, City, ST" address (labelCityState): the stored documents
+// scripts/requeue-label-city-state.js re-sends.
+module.exports.isLabelCityState = (text) => {
+  const s = norm(text).replace(/\./g, '');
+  return !!s && labelCityState(s.split(/[,/]|\s+-\s+/).map((x) => x.trim()).filter(Boolean), text);
 };
