@@ -178,6 +178,14 @@ test('a demo tenant read by hand is a sandbox; a real name starting with demo is
   assert.equal(sandboxSlugRule('demodesk-gmbh'), null);
 });
 
+test("Jobvite's own mid-market demo tenant is a sandbox, by slug and by posting URL", () => {
+  assert.equal(sandboxSlugRule('jobvite-midmarket'), 'known:demo');
+  assert.equal(isSandboxPosting({ ats: 'jobvite', slug: 'jobvite-midmarket' }), true);
+  assert.equal(isSandboxPosting({ url: 'https://jobs.jobvite.com/jobvite-midmarket/job/oKeYAfwg' }), true);
+  assert.equal(isSandboxPosting({ url: 'https://jobs.jobvite.com/zones/job/oNv9AfwL' }), false);
+  assert.equal(isSandboxPosting({ ats: 'jobvite', slug: 'jobvite' }), false);
+});
+
 test('Teamtailor sandboxes minted with an epoch are one family; a name starting "sandbox" is not', () => {
   assert.equal(sandboxSlugRule('sandboxnytlaegejob-1732104705'), 'family:teamtailor-demo');
   assert.equal(sandboxSlugRule('sandboxsaurtestjtmo-1743074489'), 'family:teamtailor-demo');
