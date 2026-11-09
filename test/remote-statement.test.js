@@ -103,6 +103,10 @@ test('the backfill keeps a tag the title, location or a stated wording gives', (
     ['Data Engineer', 'United States', '<p>Benefits: • Remote with flexible hours • 401(k)</p>'],
     ['Head of B2B Growth', null, '<p>Logistics Remote. Anywhere within +/- 3h of CET.</p>'],
     ['Specialist', 'Texas', '<p>• What &amp; Where: Remote &amp; Full Time, Permanent</p>'],
+    ['Territory Sales Representative', 'Jacksonville, Florida', '<p>Free on-site gym. Position is full-time and remote and can be located in Miami</p>'],
+    ['Healthcare Integration Consultant', 'Lisboa, PT', '<p>• Full-Remote work.</p>'],
+    ['Business Development Manager', 'Carol Stream - IL', '<p>This position will primarily work from a remote home environment</p>'],
+    ['Director, Sales', 'Washington, District of Columbia', '<p>Location: Washington, DC or Remote, U.S. Reports to: EVP</p>'],
   ];
   for (const [title, location, description] of kept) {
     assert.strictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);
@@ -116,6 +120,8 @@ test('the backfill keeps a tag the title, location or a stated wording gives', (
     ['DevOps Software Engineer', 'Bethesda, Maryland', '<p>Location: Bethesda, MD Category: DevOps Remote Type: No Clearance</p>'],
     ['Registered Nurse', 'St Albans', '<p>advice, and treatment, including remote GP appointments, physiotherapy</p>'],
     ['Technical Account Manager', 'Cape Town', '<p>The role is office-based and not remote.</p>'],
+    ['Data Platform Engineer', 'Auckland', '<p>we are unfortunately not able to consider remote options.</p>'],
+    ['Senior Product Marketing Manager', 'Chicago, IL 60607', '<p>Four weeks of Work From Anywhere annually.</p>'],
   ];
   for (const [title, location, description] of cleared) {
     assert.notStrictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);

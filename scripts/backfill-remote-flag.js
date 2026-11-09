@@ -60,13 +60,17 @@ const HEAD_REMOTE = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|
 const TEXT_REMOTE = new RegExp([
   '#li-\\s*remote\\b', '\\bglobally\\s+remote\\b', '\\bremote\\s*\\/\\s*virtual\\b', '\\bvirtual\\s*\\/\\s*remote\\b',
   '\\bremote(?:\\s+work(?:ing)?)?\\s+environment\\b', '\\(\\s*or\\s+remote\\b', '\\bor\\s+remote(?:ly)?\\s+(?:within|from|in|across)\\b',
-  'location\\s*:\\s*[^.\\n•:]{0,40}?[-–(,]\\s*remote\\b(?!\\s*type)', '\\bremote\\s+candidates?\\s+(?:will|are|may|can|welcome)\\b',
+  'location\\s*:\\s*[^.\\n•:]{0,40}?(?:[-–(,]|\\bor)\\s*remote\\b(?!\\s*type)', '\\bremote\\s+candidates?\\s+(?:will|are|may|can|welcome)\\b',
   '\\bremote\\s+positions?\\s+(?:located|based)\\b', '\\bflexible\\s+and\\s+remote\\s+working\\b', '\\bremote[\\s-]friendly\\b',
   // "Every Call Remote | Full-Time | Bilingual", "Type of environment: Remote", "What & Where: Remote &
   // Full Time", "Remote with flexible hours", "Logistics Remote. Anywhere within +/- 3h of CET".
   '\\bremote\\s*\\|\\s*(?:full|part)[\\s-]?time\\b',
   '\\b(?:environment|where|work(?:place)?\\s*(?:type|model|arrangement|mode|style|setting)|work\\s+location)\\s*:\\s*remote\\b',
   '\\bremote\\s+with\\s+flexible\\b', '\\bremote[.,]?\\s+anywhere\\b',
+  // "Position is full-time and remote", "Full-Remote work", "primarily work from a remote home
+  // environment", "Location: Washington, DC or Remote, U.S." (the or-form above).
+  '\\b(?:position|role|job)\\s+is\\s+(?:(?:full|part)[\\s-]?time\\s+and\\s+)?remote\\b', '\\bfull[\\s-]remote\\b',
+  '\\bprimarily\\s+(?:work\\s+)?(?:from\\s+)?(?:an?\\s+)?remote\\b', '\\bremote\\s+home\\b',
 ].join('|'), 'i');
 // The posting's own header names it remote: "QA Engineer Lead Remote We are seeking ...".
 const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
