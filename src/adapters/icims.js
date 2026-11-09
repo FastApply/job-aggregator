@@ -8,6 +8,11 @@
  *   "{company}"          -> careers.{company}.com, jobs.{company}.com, {company}.icims.com
  *   "{prefix}-{company}" -> {slug}.icims.com, then careers./jobs.{company}.com
  *   "full:{host}"        -> that host verbatim (vanity domains the patterns above miss)
+ *   "{host.with.dots}"   -> same as full:{host}. Older seeds stored careers.example.com bare;
+ *                           the "{company}" rule turned that into careers.careers.example.com.com
+ *
+ * Jibe sites page their /api/jobs list (10 a page by default, 100 at most with ?limit=100).
+ * Reading only the first response kept every Jibe board at 10 jobs (Costco lists 18,572).
  *
  * Classic portals use consistent CSS classes:
  * - .iCIMS_JobsTable container
@@ -19,6 +24,10 @@ const logger = require('../logger');
 
 const DETAIL_BATCH_SIZE = 5;
 const MAX_PAGES = 50;
+const JIBE_PAGE_SIZE = 100;                                                     // the API's ceiling
+const JIBE_MAX_JOBS = parseInt(process.env.ICIMS_JIBE_MAX_JOBS || '5000', 10);  // per crawl: memory (crawler heap 640 MB)
+const JIBE_CONCURRENCY = parseInt(process.env.ICIMS_JIBE_CONCURRENCY || '4', 10);
+const JIBE_RETRY_MS = parseInt(process.env.ICIMS_JIBE_RETRY_MS || '1000', 10);
 
 /**
  * A "full:{host}" slug names the vanity host outright, for sites the patterns below
@@ -42,8 +51,8 @@ async function fetchJobs(clientname) {
   const urls = [];
   let fullHost = null;
 
-  if (clientname.startsWith('full:')) {
-    fullHost = parseFullHost(clientname);
+  if (clientname.startsWith('full:') || (clientname.includes('.') && !clientname.includes('/'))) {
+    fullHost = parseFullHost(clientname.startsWith('full:') ? clientname : `full:${clientname}`);
     if (!fullHost) throw new Error(`iCIMS: invalid host in slug "${clientname}"`);
     urls.push(`https://${fullHost}/api/jobs`);
   } else if (clientname.includes('-')) {
@@ -62,19 +71,12 @@ async function fetchJobs(clientname) {
 
   // Try Jibe-powered JSON endpoints first
   for (const url of urls) {
+    let first;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-      if (!res.ok) continue;
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('json')) continue;
-      const text = await res.text();
-      if (text.startsWith('{') || text.startsWith('[')) {
-        const data = JSON.parse(text);
-        if (data.jobs && Array.isArray(data.jobs)) {
-          return parseJibeResponse(data, url.replace('/api/jobs', ''));
-        }
-      }
-    } catch { /* try next */ }
+      first = await fetchJibePage(url, 1);
+    } catch { continue; /* try next */ }
+    if (!first) continue;
+    return fetchAllJibePages(url, first);
   }
 
   // Fallback: scrape classic iCIMS HTML portal
@@ -87,8 +89,62 @@ async function fetchJobs(clientname) {
   throw new Error(`iCIMS: no working endpoint found for ${clientname}`);
 }
 
-function parseJibeResponse(data, baseUrl) {
-  const jobs = (data.jobs || []).map(entry => {
+/**
+ * One page of a Jibe /api/jobs list. Page 1 answers null when the URL is not a Jibe list (the
+ * caller tries the next URL pattern). A later page that is not a good JSON list throws, so it is
+ * retried rather than read as the end of the list.
+ */
+async function fetchJibePage(url, page) {
+  const res = await fetch(`${url}?limit=${JIBE_PAGE_SIZE}&page=${page}`, { signal: AbortSignal.timeout(15000) });
+  const json = res.ok && (res.headers.get('content-type') || '').includes('json');
+  const text = json ? await res.text() : '';
+  const data = text.startsWith('{') ? JSON.parse(text) : null;
+  if (data && Array.isArray(data.jobs)) return data;
+  if (page === 1) return null;
+  // not "HTTP 404": the crawler reads that wording as a dead board
+  throw new Error(`iCIMS Jibe page ${page} answered status ${res.status}${json ? '' : ' (not a JSON list)'}`);
+}
+
+/**
+ * Read every page of a Jibe list, a few pages at a time (the crawler allows 60 s per board), and
+ * parse each page as it lands so the multi-KB raw records are not all held at once.
+ * A page that still fails after one retry fails the crawl rather than returning a short list: a
+ * short list without meta.capped reads as closed jobs to the absence counter. A list longer than
+ * JIBE_MAX_JOBS returns capped=true so the unread jobs are not retired.
+ */
+async function fetchAllJibePages(url, first) {
+  const baseUrl = url.replace('/api/jobs', '');
+  const total = Number(first.totalCount ?? first.count);
+  const seen = new Map();
+  const add = (data) => { for (const job of parseJibeJobs(data, baseUrl)) if (!seen.has(job.external_id)) seen.set(job.external_id, job); };
+  add(first);
+  const meta = jibeMeta(first);
+  if (!Number.isFinite(total) || first.jobs.length < JIBE_PAGE_SIZE) return { jobs: [...seen.values()], meta: { ...meta, capped: false } };
+
+  const needed = Math.ceil(total / JIBE_PAGE_SIZE);
+  const lastPage = Math.min(needed, Math.ceil(JIBE_MAX_JOBS / JIBE_PAGE_SIZE));
+  let next = 2;
+  let stop = false;
+  let reachedEnd = false;
+  await Promise.all(Array.from({ length: JIBE_CONCURRENCY }, async () => {
+    while (!stop && next <= lastPage) {
+      const page = next++;
+      let data;
+      try {
+        try { data = await fetchJibePage(url, page); }
+        catch { await new Promise((r) => setTimeout(r, JIBE_RETRY_MS)); data = await fetchJibePage(url, page); }
+      } catch (err) { stop = true; throw err; }
+      if (data.jobs.length === 0) { reachedEnd = true; stop = true; break; }   // list shorter than totalCount said
+      add(data);
+    }
+  }));
+  const capped = !reachedEnd && lastPage < needed;
+  if (capped) logger.info({ url, total, collected: seen.size }, 'iCIMS Jibe: list larger than one crawl collects — marked partial');
+  return { jobs: [...seen.values()], meta: { ...meta, capped } };
+}
+
+function parseJibeJobs(data, baseUrl) {
+  return (data.jobs || []).map(entry => {
     const job = entry.data || entry;
     return {
       external_id: `icims_${job.req_id || job.slug}`,
@@ -101,17 +157,24 @@ function parseJibeResponse(data, baseUrl) {
       description: [job.description, job.responsibilities, job.qualifications].filter(Boolean).join('\n'),
       url: job.apply_url || `${baseUrl}/jobs/${job.slug}`,
       posted_at: job.posted_date || job.create_date || null,
-      raw_data: job,
+      raw_data: slimRaw(job),
     };
   });
 
+}
+
+// The record minus its HTML bodies (description/responsibilities/qualifications are ~30 KB a job
+// and already live in `description`); keeping them doubled the memory of a 10,000-job crawl.
+function slimRaw(job) {
+  const { description, responsibilities, qualifications, meta_data, ...rest } = job;
+  return rest;
+}
+
+function jibeMeta(data) {
   const firstJob = data.jobs?.[0]?.data || {};
   return {
-    jobs,
-    meta: {
-      companyName: firstJob.hiring_organization || null,
-      logoUrl: firstJob.hiring_organization_logo || null,
-    },
+    companyName: firstJob.hiring_organization || null,
+    logoUrl: firstJob.hiring_organization_logo || null,
   };
 }
 
@@ -358,4 +421,4 @@ async function fetchJobDetail(url) {
   }
 }
 
-module.exports = { fetchJobs };
+module.exports = { fetchJobs, _fetchAllJibePages: fetchAllJibePages };
