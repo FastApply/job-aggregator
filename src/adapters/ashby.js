@@ -1,5 +1,16 @@
+/**
+ * Some stored slugs are already percent-encoded ("Superhuman%20Platform%20Inc", 203 failed
+ * boards on 2026-11-09). encodeURIComponent on those sends %2520, which Ashby answers 404, so the
+ * board was failed on every crawl. Decode first, then encode exactly once.
+ */
+function boardPath(clientname) {
+  let name = String(clientname);
+  try { name = decodeURIComponent(name); } catch { /* a bare % that is not an escape: use as is */ }
+  return encodeURIComponent(name);
+}
+
 async function fetchJobs(clientname) {
-  const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(clientname)}?includeCompensation=true`);
+  const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${boardPath(clientname)}?includeCompensation=true`);
   if (!res.ok) throw new Error(`Ashby HTTP ${res.status}`);
   const data = await res.json();
   const jobs = (data.jobs || []).map(job => {
@@ -34,7 +45,7 @@ async function fetchJobs(clientname) {
 async function fetchCompanyMeta(clientname) {
   // First try the posting API which may have the logo
   try {
-    const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(clientname)}`);
+    const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${boardPath(clientname)}`);
     if (res.ok) {
       const data = await res.json();
       if (data.organizationLogo) return { companyName: data.organizationName, logoUrl: data.organizationLogo };
@@ -43,7 +54,7 @@ async function fetchCompanyMeta(clientname) {
 
   // Fallback: scrape the hosted page for org-theme-logo or org-theme-social images
   try {
-    const res = await fetch(`https://jobs.ashbyhq.com/${encodeURIComponent(clientname)}`, {
+    const res = await fetch(`https://jobs.ashbyhq.com/${boardPath(clientname)}`, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
     });
     if (res.ok) {
@@ -60,4 +71,4 @@ async function fetchCompanyMeta(clientname) {
   return null;
 }
 
-module.exports = { fetchJobs, fetchCompanyMeta };
+module.exports = { fetchJobs, fetchCompanyMeta, _boardPath: boardPath };
