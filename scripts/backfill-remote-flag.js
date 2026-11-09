@@ -55,13 +55,32 @@ const HEAD_REMOTE = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|
 // The text says the job is remote in wordings the reader does not take: "#LI- Remote", "globally
 // remote positions", "operates in a remote/virtual professional office environment", "Limassol (or
 // remote within UTC-1 to UTC+4)". A row skipped here keeps its stored tag, the safe direction.
-const TEXT_REMOTE = /#li-\s*remote\b|\bglobally\s+remote\b|\bremote\s*\/\s*virtual\b|\bvirtual\s*\/\s*remote\b|\bremote(?:\s+work(?:ing)?)?\s+environment\b|\(\s*or\s+remote\b|\bor\s+remote(?:ly)?\s+(?:within|from|in|across)\b/i;
+// Also "Location: Florida - Remote", "Remote candidates will be considered", "Remote positions
+// located within communities that ... serves", "flexible and remote working", "remote-friendly".
+const TEXT_REMOTE = new RegExp([
+  '#li-\\s*remote\\b', '\\bglobally\\s+remote\\b', '\\bremote\\s*\\/\\s*virtual\\b', '\\bvirtual\\s*\\/\\s*remote\\b',
+  '\\bremote(?:\\s+work(?:ing)?)?\\s+environment\\b', '\\(\\s*or\\s+remote\\b', '\\bor\\s+remote(?:ly)?\\s+(?:within|from|in|across)\\b',
+  'location\\s*:\\s*[^.\\n•:]{0,40}?[-–(,]\\s*remote\\b(?!\\s*type)', '\\bremote\\s+candidates?\\s+(?:will|are|may|can|welcome)\\b',
+  '\\bremote\\s+positions?\\s+(?:located|based)\\b', '\\bflexible\\s+and\\s+remote\\s+working\\b', '\\bremote[\\s-]friendly\\b',
+  // "Every Call Remote | Full-Time | Bilingual", "Type of environment: Remote", "What & Where: Remote &
+  // Full Time", "Remote with flexible hours", "Logistics Remote. Anywhere within +/- 3h of CET".
+  '\\bremote\\s*\\|\\s*(?:full|part)[\\s-]?time\\b',
+  '\\b(?:environment|where|work(?:place)?\\s*(?:type|model|arrangement|mode|style|setting)|work\\s+location)\\s*:\\s*remote\\b',
+  '\\bremote\\s+with\\s+flexible\\b', '\\bremote[.,]?\\s+anywhere\\b',
+].join('|'), 'i');
+// The posting's own header names it remote: "QA Engineer Lead Remote We are seeking ...".
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function headerSaysRemote(title, plain) {
+  const t = String(title || '').trim();
+  if (!t) return false;
+  return new RegExp(`^\\s*${escapeRe(t)}\\s*[-–|(,]?\\s*\\(?remote\\b`, 'i').test(plain);
+}
 
 /** Pure. The row's new tags, or null when it stays as stored. */
 function retag(row) {
   const plain = stripHtml(row.description);
   if (!REMOTE_WORD.test(plain)) return null;
-  if (HEAD_REMOTE.test(`${row.title || ''} ${row.location || ''}`) || TEXT_REMOTE.test(plain)) return null;
+  if (HEAD_REMOTE.test(`${row.title || ''} ${row.location || ''}`) || TEXT_REMOTE.test(plain) || headerSaysRemote(row.title, plain)) return null;
   const workplace = extractWorkplaceType(row.title, row.location, plain);
   if (workplace === 'remote') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
