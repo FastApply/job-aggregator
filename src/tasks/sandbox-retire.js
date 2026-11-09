@@ -41,7 +41,7 @@ const URL_SCAN_SQL = `
     JOIN companies c ON c.id = j.company_id
    WHERE j.removed_at IS NULL
      AND j.id > $1::bigint
-     AND j.url ~* '(sandbox|demo|test)'
+     AND j.url ~* '(sandbox|demo|test|impl-wd|-impl\\.myworkday|jobs2web)'
    ORDER BY j.id
    LIMIT $2`;
 
