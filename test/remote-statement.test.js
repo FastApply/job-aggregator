@@ -78,3 +78,61 @@ test('the backfill clears a row tagged on the word and leaves the rest', () => {
   assert.strictEqual(retag(row('Retail Specialist', 'Quincy, IL', '<p>Stock shelves.</p>')), null);
   assert.strictEqual(retag(row('Sales Manager', 'Remote - Texas', '<p>Selling remote monitoring.</p>')), null);
 });
+
+test('the backfill keeps a tag the title, location or a stated wording gives', () => {
+  const row = (title, location, description) => ({ title, location, description });
+  // Real rows from the 2026-11-09 shadow sample that the reader alone would have cleared.
+  const kept = [
+    ['Account Manager, AdTech - British Columbia', 'Remote', '<p>a remote work environment in PST hours. Hybrid teams</p>'],
+    ['Radiologist - Remote, Evening', 'Remote', '<p>onsite/hybrid and remote positions</p>'],
+    ['Claims Team Lead', 'Telecommuter GA', '<p>NY Preferred (Remote). Hybrid</p>'],
+    ['Principal Sales Engineer', 'Virtual', '<p>live greater than 100 miles from the office for the remote option. on-site</p>'],
+    ['Virtual Financial Advisor', 'Home Location-CO (COH01)', '<p>you will be remote within the footprint. on site</p>'],
+    ['Alliances & Channels Leader', 'Home Based - Americas; Home based - EMEA', '<p>These are globally remote positions.</p>'],
+    ['Customer Success Manager', 'UK London Area OFFSITE', '<p>#Remote #SaaS</p>'],
+    ['Outside Sales Representative', 'FRESNO, CALIFORNIA', '<p>#LI- Remote Compensation</p>'],
+    ['College Internship', 'Ohio, United States', '<p>operates in a remote/virtual professional office environment</p>'],
+    ['Head of Analytics', 'Limassol, Cyprus', '<p>Limassol, Cyprus (or remote within UTC-1 to UTC+4)</p>'],
+    ['QA Engineer Lead', 'Washington, District of Columbia', '<p>QA Engineer Lead</p><p>Remote</p><p>We are seeking an experienced lead. on-site</p>'],
+    ['Claims Resolution Specialist I', 'United States', '<p>Country: United States of AmericaLocation: Florida - Remote WHY JOIN</p>'],
+    ['Senior Manager, Salesforce', 'Washington, District of Columbia', '<p>headquarters are located in Washington, D.C. Remote candidates will be considered.</p>'],
+    ['POD Pharmacist', 'Texas, TX, USA', '<p>Remote positions located within communities that Monogram Health serves</p>'],
+    ['Senior Consultant', 'United Kingdom', '<p>This role offers flexible and remote working, with travel to our Horsham office</p>'],
+    ['Care Manager (Bilingual)', 'Houston (statewide), Texas', '<p>with Every Call Remote | Full-Time | Bilingual The Kind of Person</p>'],
+    ['Support Engineer, L2', 'Kyiv, Ukraine', '<p>Type of engagement: B2B Type of environment: Remote Location: Ukraine</p>'],
+    ['Data Engineer', 'United States', '<p>Benefits: • Remote with flexible hours • 401(k)</p>'],
+    ['Head of B2B Growth', null, '<p>Logistics Remote. Anywhere within +/- 3h of CET.</p>'],
+    ['Specialist', 'Texas', '<p>• What &amp; Where: Remote &amp; Full Time, Permanent</p>'],
+    ['Territory Sales Representative', 'Jacksonville, Florida', '<p>Free on-site gym. Position is full-time and remote and can be located in Miami</p>'],
+    ['Healthcare Integration Consultant', 'Lisboa, PT', '<p>• Full-Remote work.</p>'],
+    ['Business Development Manager', 'Carol Stream - IL', '<p>This position will primarily work from a remote home environment</p>'],
+    ['Director, Sales', 'Washington, District of Columbia', '<p>Location: Washington, DC or Remote, U.S. Reports to: EVP</p>'],
+    // Unexplained mentions keep the tag, in wordings no list above names.
+    ['AV Project Specialist', 'Atlanta, Georgia', '<p>The position location is full-time remote. Responsibilities include</p>'],
+    ['Sales Director', 'Dallas, Texas', '<p>Location &amp; Travel • Remote within the United States • Bentonville preferred</p>'],
+    ['Product Owner I', 'United States', '<p>• This is a full-time position • Remote, up to 10% travel may be required</p>'],
+    ['Senior Customer Excellence Manager', 'South Africa', '<p>• Remote work from South Africa •</p>'],
+    ['EHR Analyst', 'Roseville, MN 55113', '<p><strong>Location</strong></p><ul><li>Remote, must be US Based</li></ul>'],
+  ];
+  for (const [title, location, description] of kept) {
+    assert.strictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);
+  }
+  // Still cleared: the word is about something else.
+  const cleared = [
+    ['Retail Merchandise Processor', 'Kingman Store (Kingman, Arizona)', '<p>conducting remote "interviews," and making artificial job offers</p>'],
+    ['Monitor Tech', 'Little Rock', '<p>monitoring patients on remote telemetry</p>'],
+    ['Postdoc: Microwave Remote Sensing', 'JPL Campus', '<p>research in microwave remote sensing</p>'],
+    ['Executive Assistant', 'Springfield, Illinois', '<p>No remote option</p>'],
+    ['DevOps Software Engineer', 'Bethesda, Maryland', '<p>Location: Bethesda, MD Category: DevOps Remote Type: No Clearance</p>'],
+    ['Registered Nurse', 'St Albans', '<p>advice, and treatment, including remote GP appointments, physiotherapy</p>'],
+    ['Technical Account Manager', 'Cape Town', '<p>The role is office-based and not remote.</p>'],
+    ['Data Platform Engineer', 'Auckland', '<p>we are unfortunately not able to consider remote options.</p>'],
+    ['Senior Product Marketing Manager', 'Chicago, IL 60607', '<p>Four weeks of Work From Anywhere annually.</p>'],
+    ['Site Manager', 'Boothbay, Maine', '<p>This is a field-based position that cannot be performed remotely.</p>'],
+    ['Sr. Manager, Paid Search', 'Minneapolis', '<p>office on set days each week, and an option to work remote on others.</p>'],
+    ['Information Security Lead', 'Sacramento, CA', '<p>Network, remote access, and endpoint security. Manage firewall, VPN, and remote-access tools</p>'],
+  ];
+  for (const [title, location, description] of cleared) {
+    assert.notStrictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);
+  }
+});

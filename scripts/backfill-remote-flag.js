@@ -45,10 +45,78 @@ const NO_WORK_MODEL = [
   'bamboohr', 'ukg',
 ];
 
+// The title or location says the job is worked away from an office, so the tag is the employer's
+// and not the old word reader's. The reader alone is not enough here: it lets a hybrid word anywhere
+// in the text beat a location of "Remote" (illumin "Account Manager", location "Remote", stored
+// remote, read hybrid), and it does not know "Virtual", "Home Based", "Telecommuter", "Home
+// Location" or "OFFSITE". On the 2026-11-09 shadow sample those were a quarter of the rows it would
+// have cleared. "Remote Sensing" and the reader's other things-not-work-models stay excluded.
+const HEAD_REMOTE = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))|\btelecommut\w*|\bwork(?:ing)?\s+from\s+home\b|\bwfh\b|\bvirtual\b|\bhome[\s-]*(?:based|office|location)\b|\boffsite\b|\banywhere\b/i;
+// The text says the job is remote in wordings the reader does not take: "#LI- Remote", "globally
+// remote positions", "operates in a remote/virtual professional office environment", "Limassol (or
+// remote within UTC-1 to UTC+4)". A row skipped here keeps its stored tag, the safe direction.
+// Also "Location: Florida - Remote", "Remote candidates will be considered", "Remote positions
+// located within communities that ... serves", "flexible and remote working", "remote-friendly".
+const TEXT_REMOTE = new RegExp([
+  '#li-\\s*remote\\b', '\\bglobally\\s+remote\\b', '\\bremote\\s*\\/\\s*virtual\\b', '\\bvirtual\\s*\\/\\s*remote\\b',
+  '\\bremote(?:\\s+work(?:ing)?)?\\s+environment\\b', '\\(\\s*or\\s+remote\\b', '\\bor\\s+remote(?:ly)?\\s+(?:within|from|in|across)\\b',
+  'location\\s*:\\s*[^.\\n•:]{0,40}?(?:[-–(,]|\\bor)\\s*remote\\b(?!\\s*type)', '\\bremote\\s+candidates?\\s+(?:will|are|may|can|welcome)\\b',
+  '\\bremote\\s+positions?\\s+(?:located|based)\\b', '\\bflexible\\s+and\\s+remote\\s+working\\b', '\\bremote[\\s-]friendly\\b',
+  // "Every Call Remote | Full-Time | Bilingual", "Type of environment: Remote", "What & Where: Remote &
+  // Full Time", "Remote with flexible hours", "Logistics Remote. Anywhere within +/- 3h of CET".
+  '\\bremote\\s*\\|\\s*(?:full|part)[\\s-]?time\\b',
+  '\\b(?:environment|where|work(?:place)?\\s*(?:type|model|arrangement|mode|style|setting)|work\\s+location)\\s*:\\s*remote\\b',
+  '\\bremote\\s+with\\s+flexible\\b', '\\bremote[.,]?\\s+anywhere\\b',
+  // "Position is full-time and remote", "Full-Remote work", "primarily work from a remote home
+  // environment", "Location: Washington, DC or Remote, U.S." (the or-form above).
+  '\\b(?:position|role|job)\\s+is\\s+(?:(?:full|part)[\\s-]?time\\s+and\\s+)?remote\\b', '\\bfull[\\s-]remote\\b',
+  '\\bprimarily\\s+(?:work\\s+)?(?:from\\s+)?(?:an?\\s+)?remote\\b', '\\bremote\\s+home\\b',
+].join('|'), 'i');
+// The posting's own header names it remote: "QA Engineer Lead Remote We are seeking ...".
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function headerSaysRemote(title, plain) {
+  const t = String(title || '').trim();
+  if (!t) return false;
+  return new RegExp(`^\\s*${escapeRe(t)}\\s*[-–|(,]?\\s*\\(?remote\\b`, 'i').test(plain);
+}
+
+// Cleared only when EVERY mention of the word is explained; any other mention keeps the stored tag.
+// Listing the ways a posting states remote never converged: four shadow samples on 2026-11-09 each
+// turned up new ones ("The position location is full-time remote", "Location • Remote within the
+// United States", "• Remote, up to 10% travel", "Remote work from South Africa"). The ways the word
+// means something else are few and repeat across employers, so the test runs that way round.
+// A thing, not a work model, right after the word: "remote sensing", "remote GP appointments",
+// "remote “interviews,”" (a scam warning), "remote job sites", "remote communities".
+const THING_AFTER = /^[\s\-“"']*(?:sensing|access|monitor\w*|patients?|telemetry|telehealth|tele-?medicine|support|connection|connectivity|desktop|control(?:s|led)?|i\/o\b|cctv|gp\b|appointments?|consultations?|visits?|interviews?|locations?|sites?|job\s+sites?|work\s?sites?\s+(?:across|in)\b|communit(?:y|ies)|areas?|regions?|villages?|camps?|towns?|islands?|terrain|rural|environments\b|diagnos\w*|troubleshoot\w*|repairs?|reparatur\w*|operations?\s+cent(?:er|re)s?|pilot\w*|teams?|management\s+tools?|tools?|assistance|learning|instruction|teaching|classes|courses|offices?|parts?\s+of|retention\s+allowance|allowance|services?|meetings?|collaboration|deposit|controlled|start|keyless|viewing|inspections?|surveillance|cameras?|sensors?|devices?|equipment|systems?|servers?|installations?|deployments?|updates?|workers?\s+(?:and|or)\b)/i;
+// The text around the word denies or limits it: "This is not a remote position", "cannot be
+// performed remotely", "Remote work is not available", "Remote Type: On-site", "an option to work
+// remote on others", "Four weeks of Work From Anywhere annually", "occasional remote work".
+const DENIES_OR_PARTIAL = new RegExp([
+  '\\bnot\\s+(?:an?\\s+|be\\s+)?(?:\\w+\\s+)?(?:remote|performed\\s+remotely|work(?:ed)?\\s+remotely)', '\\bno\\s+remote', '\\bnon[\\s-]remote',
+  '\\bcannot\\s+be\\s+(?:performed|done|worked)\\s+remotely', '\\bremote(?:\\s+work(?:ing)?)?\\s+(?:is\\s+|are\\s+)?not\\s+(?:available|possible|an\\s+option|offered|permitted)',
+  '\\bnot\\s+able\\s+to\\s+consider\\s+remote', '\\bnot\\s+eligible\\s+for\\s+remote', '\\bremote[\\s-]only\\s+roles', '\\bremote\\s+type\\s*[:\\-]?\\s*(?:on-?site|office|no\\b|hybrid)',
+  '\\boccasional(?:ly)?\\s+(?:\\w+\\s+)?(?:remote|work\\s+from\\s+home)', '\\bremote\\s+(?:work\\s+)?(?:is\\s+)?(?:available\\s+)?once\\s+a\\s+week', '\\bremote\\s+workdays?',
+  '\\b\\d+\\s*(?:%|hours?|days?)\\s+(?:of\\s+)?remote', '\\bremote\\s+on\\s+(?:the\\s+)?others', '\\b(?:weeks?|days?)\\s+(?:of\\s+)?work\\s+from\\s+anywhere',
+  '\\bwork\\s+from\\s+anywhere\\s+(?:program|days?|weeks?|policy|allowance)', '\\bsome\\s+remote', '\\bpartially\\s+remote', '\\bhybrid\\b', '\\bfor\\s+(?:fully\\s+)?remote\\s+positions\\b',
+  '\\bremote\\s+(?:work\\s+)?(?:may\\s+be\\s+)?(?:possible|considered)\\s+(?:upon|with|on\\s+approval)', '\\bremote\\s+work\\s+as\\s+needed', '\\bpositions\\s+that\\s+are\\s+available\\s+as\\s+remote',
+].join('|'), 'i');
+const REMOTE_WORD_G = new RegExp(REMOTE_WORD.source, 'gi');
+function everyMentionExplained(plain) {
+  for (const m of plain.matchAll(REMOTE_WORD_G)) {
+    const end = m.index + m[0].length;
+    if (THING_AFTER.test(plain.slice(end, end + 60))) continue;
+    if (DENIES_OR_PARTIAL.test(plain.slice(Math.max(0, m.index - 80), end + 60))) continue;
+    return false;
+  }
+  return true;
+}
+
 /** Pure. The row's new tags, or null when it stays as stored. */
 function retag(row) {
   const plain = stripHtml(row.description);
   if (!REMOTE_WORD.test(plain)) return null;
+  if (HEAD_REMOTE.test(`${row.title || ''} ${row.location || ''}`) || TEXT_REMOTE.test(plain) || headerSaysRemote(row.title, plain)) return null;
+  if (!everyMentionExplained(plain)) return null;
   const workplace = extractWorkplaceType(row.title, row.location, plain);
   if (workplace === 'remote') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
