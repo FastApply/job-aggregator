@@ -45,10 +45,23 @@ const NO_WORK_MODEL = [
   'bamboohr', 'ukg',
 ];
 
+// The title or location says the job is worked away from an office, so the tag is the employer's
+// and not the old word reader's. The reader alone is not enough here: it lets a hybrid word anywhere
+// in the text beat a location of "Remote" (illumin "Account Manager", location "Remote", stored
+// remote, read hybrid), and it does not know "Virtual", "Home Based", "Telecommuter", "Home
+// Location" or "OFFSITE". On the 2026-11-09 shadow sample those were a quarter of the rows it would
+// have cleared. "Remote Sensing" and the reader's other things-not-work-models stay excluded.
+const HEAD_REMOTE = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))|\btelecommut\w*|\bwork(?:ing)?\s+from\s+home\b|\bwfh\b|\bvirtual\b|\bhome[\s-]*(?:based|office|location)\b|\boffsite\b|\banywhere\b/i;
+// The text says the job is remote in wordings the reader does not take: "#LI- Remote", "globally
+// remote positions", "operates in a remote/virtual professional office environment", "Limassol (or
+// remote within UTC-1 to UTC+4)". A row skipped here keeps its stored tag, the safe direction.
+const TEXT_REMOTE = /#li-\s*remote\b|\bglobally\s+remote\b|\bremote\s*\/\s*virtual\b|\bvirtual\s*\/\s*remote\b|\bremote(?:\s+work(?:ing)?)?\s+environment\b|\(\s*or\s+remote\b|\bor\s+remote(?:ly)?\s+(?:within|from|in|across)\b/i;
+
 /** Pure. The row's new tags, or null when it stays as stored. */
 function retag(row) {
   const plain = stripHtml(row.description);
   if (!REMOTE_WORD.test(plain)) return null;
+  if (HEAD_REMOTE.test(`${row.title || ''} ${row.location || ''}`) || TEXT_REMOTE.test(plain)) return null;
   const workplace = extractWorkplaceType(row.title, row.location, plain);
   if (workplace === 'remote') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });

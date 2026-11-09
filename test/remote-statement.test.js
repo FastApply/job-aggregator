@@ -78,3 +78,33 @@ test('the backfill clears a row tagged on the word and leaves the rest', () => {
   assert.strictEqual(retag(row('Retail Specialist', 'Quincy, IL', '<p>Stock shelves.</p>')), null);
   assert.strictEqual(retag(row('Sales Manager', 'Remote - Texas', '<p>Selling remote monitoring.</p>')), null);
 });
+
+test('the backfill keeps a tag the title, location or a stated wording gives', () => {
+  const row = (title, location, description) => ({ title, location, description });
+  // Real rows from the 2026-11-09 shadow sample that the reader alone would have cleared.
+  const kept = [
+    ['Account Manager, AdTech - British Columbia', 'Remote', '<p>a remote work environment in PST hours. Hybrid teams</p>'],
+    ['Radiologist - Remote, Evening', 'Remote', '<p>onsite/hybrid and remote positions</p>'],
+    ['Claims Team Lead', 'Telecommuter GA', '<p>NY Preferred (Remote). Hybrid</p>'],
+    ['Principal Sales Engineer', 'Virtual', '<p>live greater than 100 miles from the office for the remote option. on-site</p>'],
+    ['Virtual Financial Advisor', 'Home Location-CO (COH01)', '<p>you will be remote within the footprint. on site</p>'],
+    ['Alliances & Channels Leader', 'Home Based - Americas; Home based - EMEA', '<p>These are globally remote positions.</p>'],
+    ['Customer Success Manager', 'UK London Area OFFSITE', '<p>#Remote #SaaS</p>'],
+    ['Outside Sales Representative', 'FRESNO, CALIFORNIA', '<p>#LI- Remote Compensation</p>'],
+    ['College Internship', 'Ohio, United States', '<p>operates in a remote/virtual professional office environment</p>'],
+    ['Head of Analytics', 'Limassol, Cyprus', '<p>Limassol, Cyprus (or remote within UTC-1 to UTC+4)</p>'],
+  ];
+  for (const [title, location, description] of kept) {
+    assert.strictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);
+  }
+  // Still cleared: the word is about something else.
+  const cleared = [
+    ['Retail Merchandise Processor', 'Kingman Store (Kingman, Arizona)', '<p>conducting remote "interviews," and making artificial job offers</p>'],
+    ['Monitor Tech', 'Little Rock', '<p>monitoring patients on remote telemetry</p>'],
+    ['Postdoc: Microwave Remote Sensing', 'JPL Campus', '<p>research in microwave remote sensing</p>'],
+    ['Executive Assistant', 'Springfield, Illinois', '<p>No remote option</p>'],
+  ];
+  for (const [title, location, description] of cleared) {
+    assert.notStrictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);
+  }
+});
