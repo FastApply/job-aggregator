@@ -107,6 +107,12 @@ test('the backfill keeps a tag the title, location or a stated wording gives', (
     ['Healthcare Integration Consultant', 'Lisboa, PT', '<p>• Full-Remote work.</p>'],
     ['Business Development Manager', 'Carol Stream - IL', '<p>This position will primarily work from a remote home environment</p>'],
     ['Director, Sales', 'Washington, District of Columbia', '<p>Location: Washington, DC or Remote, U.S. Reports to: EVP</p>'],
+    // Unexplained mentions keep the tag, in wordings no list above names.
+    ['AV Project Specialist', 'Atlanta, Georgia', '<p>The position location is full-time remote. Responsibilities include</p>'],
+    ['Sales Director', 'Dallas, Texas', '<p>Location &amp; Travel • Remote within the United States • Bentonville preferred</p>'],
+    ['Product Owner I', 'United States', '<p>• This is a full-time position • Remote, up to 10% travel may be required</p>'],
+    ['Senior Customer Excellence Manager', 'South Africa', '<p>• Remote work from South Africa •</p>'],
+    ['EHR Analyst', 'Roseville, MN 55113', '<p><strong>Location</strong></p><ul><li>Remote, must be US Based</li></ul>'],
   ];
   for (const [title, location, description] of kept) {
     assert.strictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);
@@ -122,6 +128,9 @@ test('the backfill keeps a tag the title, location or a stated wording gives', (
     ['Technical Account Manager', 'Cape Town', '<p>The role is office-based and not remote.</p>'],
     ['Data Platform Engineer', 'Auckland', '<p>we are unfortunately not able to consider remote options.</p>'],
     ['Senior Product Marketing Manager', 'Chicago, IL 60607', '<p>Four weeks of Work From Anywhere annually.</p>'],
+    ['Site Manager', 'Boothbay, Maine', '<p>This is a field-based position that cannot be performed remotely.</p>'],
+    ['Sr. Manager, Paid Search', 'Minneapolis', '<p>office on set days each week, and an option to work remote on others.</p>'],
+    ['Information Security Lead', 'Sacramento, CA', '<p>Network, remote access, and endpoint security. Manage firewall, VPN, and remote-access tools</p>'],
   ];
   for (const [title, location, description] of cleared) {
     assert.notStrictEqual(retag(row(title, location, description)), null, `${title} | ${location}`);

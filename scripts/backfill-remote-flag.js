@@ -80,11 +80,43 @@ function headerSaysRemote(title, plain) {
   return new RegExp(`^\\s*${escapeRe(t)}\\s*[-–|(,]?\\s*\\(?remote\\b`, 'i').test(plain);
 }
 
+// Cleared only when EVERY mention of the word is explained; any other mention keeps the stored tag.
+// Listing the ways a posting states remote never converged: four shadow samples on 2026-11-09 each
+// turned up new ones ("The position location is full-time remote", "Location • Remote within the
+// United States", "• Remote, up to 10% travel", "Remote work from South Africa"). The ways the word
+// means something else are few and repeat across employers, so the test runs that way round.
+// A thing, not a work model, right after the word: "remote sensing", "remote GP appointments",
+// "remote “interviews,”" (a scam warning), "remote job sites", "remote communities".
+const THING_AFTER = /^[\s\-“"']*(?:sensing|access|monitor\w*|patients?|telemetry|telehealth|tele-?medicine|support|connection|connectivity|desktop|control(?:s|led)?|i\/o\b|cctv|gp\b|appointments?|consultations?|visits?|interviews?|locations?|sites?|job\s+sites?|work\s?sites?\s+(?:across|in)\b|communit(?:y|ies)|areas?|regions?|villages?|camps?|towns?|islands?|terrain|rural|environments\b|diagnos\w*|troubleshoot\w*|repairs?|reparatur\w*|operations?\s+cent(?:er|re)s?|pilot\w*|teams?|management\s+tools?|tools?|assistance|learning|instruction|teaching|classes|courses|offices?|parts?\s+of|retention\s+allowance|allowance|services?|meetings?|collaboration|deposit|controlled|start|keyless|viewing|inspections?|surveillance|cameras?|sensors?|devices?|equipment|systems?|servers?|installations?|deployments?|updates?|workers?\s+(?:and|or)\b)/i;
+// The text around the word denies or limits it: "This is not a remote position", "cannot be
+// performed remotely", "Remote work is not available", "Remote Type: On-site", "an option to work
+// remote on others", "Four weeks of Work From Anywhere annually", "occasional remote work".
+const DENIES_OR_PARTIAL = new RegExp([
+  '\\bnot\\s+(?:an?\\s+|be\\s+)?(?:\\w+\\s+)?(?:remote|performed\\s+remotely|work(?:ed)?\\s+remotely)', '\\bno\\s+remote', '\\bnon[\\s-]remote',
+  '\\bcannot\\s+be\\s+(?:performed|done|worked)\\s+remotely', '\\bremote(?:\\s+work(?:ing)?)?\\s+(?:is\\s+|are\\s+)?not\\s+(?:available|possible|an\\s+option|offered|permitted)',
+  '\\bnot\\s+able\\s+to\\s+consider\\s+remote', '\\bnot\\s+eligible\\s+for\\s+remote', '\\bremote[\\s-]only\\s+roles', '\\bremote\\s+type\\s*[:\\-]?\\s*(?:on-?site|office|no\\b|hybrid)',
+  '\\boccasional(?:ly)?\\s+(?:\\w+\\s+)?(?:remote|work\\s+from\\s+home)', '\\bremote\\s+(?:work\\s+)?(?:is\\s+)?(?:available\\s+)?once\\s+a\\s+week', '\\bremote\\s+workdays?',
+  '\\b\\d+\\s*(?:%|hours?|days?)\\s+(?:of\\s+)?remote', '\\bremote\\s+on\\s+(?:the\\s+)?others', '\\b(?:weeks?|days?)\\s+(?:of\\s+)?work\\s+from\\s+anywhere',
+  '\\bwork\\s+from\\s+anywhere\\s+(?:program|days?|weeks?|policy|allowance)', '\\bsome\\s+remote', '\\bpartially\\s+remote', '\\bhybrid\\b', '\\bfor\\s+(?:fully\\s+)?remote\\s+positions\\b',
+  '\\bremote\\s+(?:work\\s+)?(?:may\\s+be\\s+)?(?:possible|considered)\\s+(?:upon|with|on\\s+approval)', '\\bremote\\s+work\\s+as\\s+needed', '\\bpositions\\s+that\\s+are\\s+available\\s+as\\s+remote',
+].join('|'), 'i');
+const REMOTE_WORD_G = new RegExp(REMOTE_WORD.source, 'gi');
+function everyMentionExplained(plain) {
+  for (const m of plain.matchAll(REMOTE_WORD_G)) {
+    const end = m.index + m[0].length;
+    if (THING_AFTER.test(plain.slice(end, end + 60))) continue;
+    if (DENIES_OR_PARTIAL.test(plain.slice(Math.max(0, m.index - 80), end + 60))) continue;
+    return false;
+  }
+  return true;
+}
+
 /** Pure. The row's new tags, or null when it stays as stored. */
 function retag(row) {
   const plain = stripHtml(row.description);
   if (!REMOTE_WORD.test(plain)) return null;
   if (HEAD_REMOTE.test(`${row.title || ''} ${row.location || ''}`) || TEXT_REMOTE.test(plain) || headerSaysRemote(row.title, plain)) return null;
+  if (!everyMentionExplained(plain)) return null;
   const workplace = extractWorkplaceType(row.title, row.location, plain);
   if (workplace === 'remote') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
