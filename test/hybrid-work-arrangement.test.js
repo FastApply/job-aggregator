@@ -94,7 +94,7 @@ test('the work-model wordings the shadow sample found count', () => {
     'impactful, flexible-hybrid careers', 'We are proud to be a hybrid organization that offers flexibility.',
     'Flexible Work Arrangements: Hybrid', 'a hybrid home/office workplace', 'flexible, agile and hybrid ways of working',
     'Telework Type: Hybrid', "This position's work mode is hybrid.", 'Tokyo Osaka - Office Remote Hybrid',
-    'Working place: Hybrid', 'Remote Position: Hybrid Region: Asia', 'UX Designer - Barcelona Hybrid',
+    'Working place: Hybrid', 'Work location: GUANGZHOU Hybrid Travel: May include up to 35%', 'Remote Position: Hybrid Region: Asia', 'UX Designer - Barcelona Hybrid',
     'ICIS – Karlsruhe oder London, Hybrid Über ICIS', 'Spring 2027 internships will be hybrid.', 'Work Flexibility: Hybrid',
     'Flexible work: hybrid or full-time from our office in Monterrey', 'we have a hybrid-hub model',
     'Remote-first flexibility - work from home, the office, or hybrid', 'Flexible, hybrid and agile working',
