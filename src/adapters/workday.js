@@ -1,5 +1,6 @@
 const logger = require('../logger');
 const { WORKDAY_SITES } = require('./workday-sites');
+const { withCountry } = require('../utils/place-country');
 
 // Common Workday instances first (covers ~80% of tenants), then the higher-numbered
 // pods (wd10x/wd50x) seen across the company set. discoverConfig() tries these in
@@ -138,9 +139,29 @@ async function fetchJobDetail(baseUrl, externalPath) {
 const PLACE_COUNT = /^\s*\d+\s+locations?\s*$/i;
 
 function placeOf(detail, posting) {
-  if (detail?.location) return detail.location;
+  // The detail's own country field, when the place text names none ("PARIS", "Copenhagen"):
+  // without it the posting was in no country search (place-country.js). The requisition's
+  // alpha-2 code is used only when it is the same country the posting names.
+  if (detail?.location) {
+    const name = detail.country?.descriptor;
+    const req = detail.jobRequisitionLocation?.country;
+    const code = req?.alpha2Code && (!name || req.descriptor === name) ? req.alpha2Code : null;
+    return withCountry(detail.location, { code, name });
+  }
   const listed = posting?.locationsText;
   return listed && !PLACE_COUNT.test(listed) ? listed : null;
+}
+
+// The posting's own work model: Workday's detail `remoteType` ("On-Site", "Remote", "Hybrid").
+// It was dropped, so every Workday row was tagged from its text alone (extract.js), and an
+// on-site posting whose text mentioned remote work sat in remote-only searches. Null when absent
+// or unrecognised ("Flexible"), which keeps the text reading and the stored tag.
+function workModelOf(detail) {
+  const t = String(detail?.remoteType || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
+  if (/\bhybrid\b/.test(t)) return 'hybrid'; // before remote: "Remote/Hybrid" is hybrid
+  if (/\bremote\b/.test(t)) return 'remote';
+  if (/\bon ?site\b|\bin office\b|\bin person\b/.test(t)) return 'onsite';
+  return null;
 }
 
 /**
@@ -344,7 +365,7 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
         title: posting.title,
         department: deptMap.get(posting.externalPath) || null,
         location: placeOf(detail, posting),
-        workplace_type: null,
+        workplace_type: workModelOf(detail),
         employment_type: detail?.timeType || null,
         salary_min: salary.salary_min || null,
         salary_max: salary.salary_max || null,
@@ -373,4 +394,4 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
   return { jobs, meta: { companyName, logoUrl, capped } };
 }
 
-module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT, placeOf, PLACE_COUNT };
+module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT, placeOf, workModelOf, PLACE_COUNT };

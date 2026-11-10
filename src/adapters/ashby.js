@@ -1,3 +1,5 @@
+const { withCountry } = require('../utils/place-country');
+
 /**
  * Some stored slugs are already percent-encoded ("Superhuman%20Platform%20Inc", 203 failed
  * boards on 2026-11-09). encodeURIComponent on those sends %2520, which Ashby answers 404, so the
@@ -19,7 +21,9 @@ async function fetchJobs(clientname) {
       external_id: `ashby_${job.id}`,
       title: job.title,
       department: job.department || job.team || null,
-      location: job.location || 'Remote',
+      // Ashby's own address field names the country a bare place leaves out ("Berlin Office"):
+      // without it the posting was in no country search (place-country.js).
+      location: withCountry(job.location, { name: job.address?.postalAddress?.addressCountry }) || 'Remote',
       workplace_type: job.workplaceType || null,
       employment_type: job.employmentType || null,
       salary_min: comp?.compensationTierSummary?.[0]?.min || null,
