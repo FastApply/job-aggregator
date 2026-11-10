@@ -10,6 +10,7 @@
 
 const { withoutNordicIntern } = require('./nordic-intern');
 const { withoutRemoteBoilerplate } = require('./remote-boilerplate');
+const { jobStatesHybrid } = require('./hybrid-work');
 
 // ── Remote Detection ──────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ const REMOTE_NEGATIVE = [
   /\bnon[\s-]*remote\b/i,
   /\bin[\s-]*office\b/i,
   /\bon[\s-]*site\s*only\b/i,
-  /\bhybrid\b/i,
+  // Hybrid is read by jobStatesHybrid (hybrid-work.js): "hybrid crypto schemes" is no work model.
   /\bremote\s*not\s*available\b/i,
   /\bno\s*remote\b/i,
 ];
@@ -63,6 +64,7 @@ function classifyRemote(title, location, workplaceType, description) {
   const text = `${title || ''} ${location || ''} ${withoutRemoteBoilerplate(String(description || '').replace(/\s+/g, ' '))}`;
 
   // Check negatives first
+  if (jobStatesHybrid(title, location, description)) return false;
   for (const re of REMOTE_NEGATIVE) {
     if (re.test(text)) return false;
   }
