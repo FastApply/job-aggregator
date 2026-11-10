@@ -197,3 +197,19 @@ test('the worker refuses the same hand-read tenants as main', () => {
   assert.equal(sandboxSlugRule('cmsprep'), 'known:demo');
   assert.equal(sandboxSlugRule('demorecruiting'), 'known:demo');
 });
+
+test('a Workday implementation tenant is a sandbox host (supply loop 2026-11-10)', () => {
+  const impl = 'https://alignmenthealthcare5.impl-wd12.myworkdayjobs.com/ahc_external/job/Orange-CA/AVP--Contracting---Network_R1';
+  const m = sandboxMatch({ ats: 'workday', slug: 'alignmenthealthcare5', url: impl });
+  assert.ok(m, 'impl-wd12 must be flagged');
+  assert.equal(m.rule, 'host:workday-impl');
+  assert.equal(m.via, 'url');
+  assert.ok(isSandboxPosting({ careerUrl: 'https://acme.wd5-impl.myworkdayjobs.com/External' }));
+  assert.ok(isSandboxPosting({ url: 'https://auto12.jobs2web.com/job/Anywhere-QA/1/' }));
+  // The live site and look-alikes stay.
+  for (const url of [
+    'https://alignmenthealthcare.wd12.myworkdayjobs.com/ahc_external/job/Orange-CA/AVP--Contracting---Network_R1',
+    'https://impl.wd1.myworkdayjobs.com/en-US/Careers/job/Remote/Analyst_R4',
+    'https://wd1.myworkdaysite.com/recruiting/implant/External/job/Remote/Analyst_R5',
+  ]) assert.equal(isSandboxPosting({ ats: 'workday', slug: 'alignmenthealthcare', url }), false, url);
+});

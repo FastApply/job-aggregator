@@ -73,6 +73,29 @@ const SANDBOX_FAMILIES = [
 // sandbox-job-board.util.ts.
 const KNOWN_SANDBOX_SLUGS = new Set(['demorecruiting', 'cmsprep', 'jobvitemidmarket']);
 
+// Vendor test hosts whose tenant name says nothing. A Workday implementation tenant lives on an
+// `impl-wdN` (or `wdN-impl`) data centre: the customer's copy for configuring and testing, not its
+// live careers site. alignmenthealthcare5.impl-wd12.myworkdayjobs.com/ahc_external carried six
+// postings the live alignmenthealthcare.wd12 site also has, read 2026-11-10. SAP's
+// SuccessFactors QA tenants live on autoNN.jobs2web.com. Keep it in step with KNOWN_SANDBOX_HOSTS
+// in sandbox-job-board.util.ts.
+const SANDBOX_HOSTS = [
+  [/\.(?:impl-wd\d+|wd\d+-impl)\.myworkday(?:jobs|site)\.com$/, 'workday', 'host:workday-impl'],
+  [/^auto\d*\.jobs2web\.com$/, 'successfactors', 'host:jobs2web-qa'],
+];
+
+/** The vendor test host a URL is on, or null. */
+function sandboxHostMatch(rawUrl) {
+  if (!rawUrl) return null;
+  let url;
+  try { url = new URL(String(rawUrl).trim()); } catch { return null; }
+  const host = url.hostname.toLowerCase();
+  for (const [re, ats, rule] of SANDBOX_HOSTS) {
+    if (re.test(host)) return { ats, slug: host.split('.')[0], rule };
+  }
+  return null;
+}
+
 // Direct-employer adapters: ats_slug is a shard selector, not a tenant id, so the name says
 // nothing about the board. Their URLs are checked, their slugs are not.
 const SHARD_SLUG_ATS = new Set(['amazon', 'netflix', 'google']);
@@ -192,6 +215,8 @@ function sandboxMatch({ ats, slug, careerUrl, url } = {}, opts) {
     if (rule) return { ats: kind, slug: String(slug), via: 'slug', rule };
   }
   for (const [via, u] of [['career_url', careerUrl], ['url', url]]) {
+    const host = sandboxHostMatch(u);
+    if (host) return { ...host, via };
     const board = boardFromUrl(u);
     if (!board) continue;
     const rule = sandboxSlugRule(board.slug, opts);
@@ -203,6 +228,6 @@ function sandboxMatch({ ats, slug, careerUrl, url } = {}, opts) {
 const isSandboxPosting = (posting, opts) => sandboxMatch(posting, opts) !== null;
 
 module.exports = {
-  sandboxSlugRule, isSandboxSlug, boardFromUrl, sandboxMatch, isSandboxPosting,
+  sandboxSlugRule, isSandboxSlug, boardFromUrl, sandboxMatch, isSandboxPosting, sandboxHostMatch,
   ALLOWED_BOARDS, WHOLE_OR_SUFFIX, WHOLE_DELIMITED_ONLY,
 };
