@@ -44,7 +44,7 @@ const HYBRID_WORK = new RegExp([
   '\\bhybrid\\s*[(,:\\-–—]\\s*(?:\\d|one|two|three|four|minimum|at\\s+least|\\w+\\s+days?|(?:mon|tues?|wed|thu|fri)\\w*)',
   // A label's value, with or without a colon or a bullet: "Location: Hybrid", "Work Model Hybrid",
   // "Work modality: Hybrid", "Working Arrangement Hybrid", "WORK MODE: • Hybrid/Split".
-  `\\b${LABEL}\\s*[:\\-–—]?\\s*(?:[•·*]\\s*)?(?:[\\w .,/&()'’-]{0,60}?[,/|(\\-–—•·]\\s*)?hybrid\\b${NOT_A_THING}`,
+  `\\b${LABEL}\\s*[:\\-–—]?\\s*(?:[•·*]\\s*)?(?:[\\w .,/&()'’-]{0,60}?[\\s,/|(\\-–—•·]\\s*)?hybrid\\b${NOT_A_THING}`,
   // "working hybrid from our Irvine office", "Hybrid (remote und im Office)".
   `\\bwork(?:ing|s)?\\s+hybrid\\b${NOT_A_THING}`, '\\bhybrid\\s*\\(\\s*(?:remote|office|on-?site|home|\\d)',
   // The employer's tags: "#LI-Hybrid", "#Hybrid"; "flexible-hybrid careers".
