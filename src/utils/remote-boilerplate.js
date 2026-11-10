@@ -19,8 +19,18 @@ const CONDITIONAL_REMOTE = /\b(?:if|unless|whether)\s+(?:this|the|it)\b[^.;!?]{0
  */
 const ANYWHERE_PERK = /\b(?:(?:\d+|one|two|three|four|six|eight|twelve)\s+)?(?:months?|weeks?|days?)\s+(?:of\s+|a\s+year\s+)?work\s+from\s+anywhere\b|\bwork\s+from\s+anywhere\s+(?:polic(?:y|ies)|programs?|perks?|benefits?|stipends?|days?|weeks?|months?)\b/gi;
 
+/**
+ * The employer's policy for each mode, on every posting: Booz Allen's "• Remote: If this position
+ * is listed as remote, there may still be occasions ... • Hybrid: If this position is listed as
+ * hybrid, ..." It names no mode for THIS job. Its "hybrid" used to make every such row hybrid; once
+ * the hybrid reader stopped reading the bare word, "position is listed as remote" read as remote
+ * (2026-11-10 shadow of stored Hybrid rows).
+ */
+const LISTED_AS_MODE =
+  /(?:\b(?:remote|hybrid|on-?site|in[\s-]office)\s*:\s*)?\b(?:if|when|where)\s+(?:this|the|a|your)\s+(?:position|role|job|opportunity)\s+is\s+(?:listed|posted|designated|advertised|marked|identified)\s+as\s+(?:remote|hybrid|on-?site|in[\s-]office)\b[^.;!?•]*/gi;
+
 function withoutRemoteBoilerplate(text) {
-  return String(text || '').replace(CONDITIONAL_REMOTE, ' ').replace(ANYWHERE_PERK, ' ');
+  return String(text || '').replace(CONDITIONAL_REMOTE, ' ').replace(LISTED_AS_MODE, ' ').replace(ANYWHERE_PERK, ' ');
 }
 
 module.exports = { withoutRemoteBoilerplate };

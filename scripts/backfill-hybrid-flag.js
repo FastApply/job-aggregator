@@ -26,7 +26,7 @@
  */
 const fs = require('fs');
 const { stripHtml } = require('../src/utils/html');
-const { extractWorkplaceType, normalizeWorkplaceType } = require('../src/utils/extract');
+const { extractWorkplaceTypeFromDescription, normalizeWorkplaceType } = require('../src/utils/extract');
 const { classifyJob } = require('../src/utils/classify');
 
 const HYBRID_WORD = /\bhybrid\b/i;
@@ -50,7 +50,10 @@ function retag(row, { all = false } = {}) {
   const plain = stripHtml(row.description || '');
   if (!HYBRID_WORD.test(`${row.title || ''} ${plain}`)) return null;
   if (HYBRID_WORD.test(String(row.location || ''))) return null;
-  const workplace = extractWorkplaceType(row.title, row.location, plain);
+  // The late-fetch reader: remote needs the title or location to say so, or the text to say it
+  // unambiguously. Booz Allen's boilerplate ("If this position is listed as remote or hybrid ...")
+  // read as remote under the crawl reader once its hybrid stopped counting.
+  const workplace = extractWorkplaceTypeFromDescription(row.title, row.location, plain);
   if (workplace === 'hybrid') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
   if (!all && !tags.is_remote) return null;
