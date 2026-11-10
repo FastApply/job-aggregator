@@ -73,3 +73,53 @@ test('a hybrid work statement still beats remote wording, as before', () => {
     'hybrid'
   );
 });
+
+// Read off the 2026-11-10 shadow sample of stored Hybrid rows (2% of 335,163 crawl rows).
+test('the work-model wordings the shadow sample found count', () => {
+  for (const text of [
+    '#LI-Hybrid', 'privacy-notice/) #LI-HYBRID', 'Closing Date: Hybrid Worker',
+    'Our hybrid environment allows you to balance your work and life.',
+    'Hybrid sales environment (home office and in-field)',
+    'candidates who can work in a remote or hybrid environment, depending on business needs',
+    'other business sites (e.g., Hanscom AFB), hybrid, or fully remote.',
+    "That's why we've adopted a hybrid approach including required in-office days.",
+    'Hybrid or flexible work options may be offered after onboarding.',
+    'Work modality: Hybrid', 'Working Arrangement Hybrid Salary range', 'Work Model Hybrid Background Check',
+    'Arbeitsmodell: Hybrid', 'Work location: • Hybrid Eligible', 'WORK MODE: • Hybrid/Split',
+    'Work Arrangement: • Hybrid: Tuesday, Wednesday, Thursday required office days',
+    'Product Analyst, Digital Assets (Hybrid - NYC)', 'Legal Counsel Derby (Three days Derby/hybrid) Full time',
+    'We offer a dynamic, hybrid-friendly culture.',
+    'This role is categorized as hybrid. This means the selected candidate is expected on site.',
+    'We embrace a hybrid approach to work.', 'On-site or Remote: Hybrid', '#LI-SA1 #Hybrid',
+    'impactful, flexible-hybrid careers', 'We are proud to be a hybrid organization that offers flexibility.',
+    'Flexible Work Arrangements: Hybrid', 'a hybrid home/office workplace', 'flexible, agile and hybrid ways of working',
+    'Telework Type: Hybrid', "This position's work mode is hybrid.", 'Tokyo Osaka - Office Remote Hybrid',
+    'Working place: Hybrid', '<p>Location:</strong> London | <strong>Work Model:</strong> Hybrid</span></p>',
+  ]) {
+    assert.strictEqual(statesHybridWork(text), true, text);
+  }
+});
+
+test('the other hybrids the shadow sample found do not', () => {
+  for (const text of [
+    'Familiarity with Agile, Waterfall, or hybrid delivery methodologies.',
+    'Support hybrid enterprise and cloud-native environments',
+    'telecom networks, datacenters, cloud or hybrid infrastructure, 5G',
+    'including virtual and hybrid formats.',
+    'ready to step into a hybrid leadership role, combining hands-on patient care',
+    'Lead the design and development of hybrid retrieval architectures',
+    'Experience with online or hybrid instruction is preferred.',
+    'our Cardiac Catheterisation Laboratories and Hybrid Theatre perform a range of interventions',
+    'Our brick-and-mortar, virtual, and hybrid schools specialize in closing gaps',
+    'the EL9, a nine-passenger, hybrid-electric aircraft',
+    'Komponenten für PKW, Hybrid-, Erdgas- und Wasserstofffahrzeuge',
+    'advanced packaging technologies including TSVs, hybrid bonding, and 3D integration',
+    'automation, control, SCADA, hybrid energy systems', 'immunocapturing hybrid assays',
+    'a high performance, light weight, hybrid metallic and composite structure',
+    'working a hybrid list of net-new and existing accounts', 'The Data Scientist will be a hybrid professional',
+    'delivering projects using waterfall, hybrid, and agile methodologies.',
+    'strategy across cloud, hybrid, and on-prem environments', 'Azure AI Search for hybrid retrieval',
+  ]) {
+    assert.strictEqual(statesHybridWork(text), false, text);
+  }
+});

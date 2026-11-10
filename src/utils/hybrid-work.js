@@ -16,32 +16,50 @@
 //   - anywhere in the LOCATION field, which names places and modes and no technology.
 
 const WORK_NOUNS =
-  'work(?:ing|place|force|s)?|role|roles|position|positions|job|jobs|schedule|model|arrangements?|set-?up|basis|capacity|' +
-  'opportunity|policy|office|offices|remote|remotely|on-?site|in-?office|in-?person|format|structure|mode|option|' +
-  'flexibility|employees?|team\\s+members?|presence|attendance|environment\\s+with\\s+(?:\\d|one|two|three|four)';
-// Not a thing: "remote and hybrid cloud deployments", "the platform is hybrid infrastructure".
+  'work(?:ing|place|force|er|ers|s)?|role|roles|position|positions|job|jobs|schedule|model|arrangements?|set-?up|basis|capacity|' +
+  'opportunity|policy|office|offices|remote|remotely|on-?site|in-?office|in-?person|format\\s+(?:with|of)|structure|mode|option|' +
+  'flexibility|friendly|employees?|team\\s+members?|presence|attendance|eligible|organi[sz]ation|culture|' +
+  'approach\\s+to\\s+work(?:ing)?|ways?\\s+of\\s+working|' +
+  // One environment, not "hybrid environments" (cloud): "Our hybrid environment allows you to balance
+  // your work", "hybrid sales environment (home office and in-field)".
+  '(?:(?:work|working|sales|office|team)\\s+)?environment(?!s)';
+// Not a thing: "remote and hybrid cloud deployments", "hybrid delivery methodologies", "Hybrid Theatre".
 const NOT_A_THING =
-  '(?![\\s-]+(?:cloud|crypto\\w*|apps?|applications?|vehicles?|cars?|integrations?|infrastructure|environments?|systems?|' +
-  'solutions?|architectures?|data|deployments?|it|networks?|events?|engines?|mobile|storage|clusters?|servers?|models?\\s+of\\s+care))';
-const OTHER_MODE = '(?:remote(?:ly)?|on-?site|in-?office|in-?person|office-based|work\\s+from\\s+home|wfh)';
+  '(?![\\s-]+(?:cloud|crypto\\w*|apps?|applications?|vehicles?|cars?|electric|integrations?|infrastructure|environments|' +
+  'systems?|solutions?|architectures?|data|deployments?|it|networks?|events?|engines?|mobile|storage|clusters?|servers?|' +
+  'enterprise|delivery|retrieval|instruction|formats|theat(?:re|er)s?|schools?|classes|courses|learning|methodolog\\w*|' +
+  'approaches?\\s+to\\s+(?!work)|models?\\s+of\\s+care|leadership)\\b)';
+const OTHER_MODE =
+  '(?:remote(?:ly)?|on-?site|in-?office|in-?person|office-based|work\\s+from\\s+home|wfh|flexible\\s+work(?:ing)?)';
+const LABEL =
+  '(?:location|workplace(?:\\s+type)?|work(?:ing)?\\s*(?:mode|modality|model|type|arrangements?|style|setting|location|environment|schedule|place)|' +
+  'arrangements?|position\\s+type|job\\s+type|remote\\s+type|telework\\s+type|employment\\s+type|schedule|site|' +
+  'on-?site\\s+or\\s+remote|remote\\s+or\\s+on-?site|flexible\\s+work(?:ing)?\\s+arrangements?|arbeitsmodell|modalidad|modalit[àa])';
 
 const HYBRID_WORK = new RegExp([
-  // "hybrid role", "hybrid work model", "hybrid-remote", "Hybrid Remote".
+  // "hybrid role", "hybrid work model", "hybrid-remote", "Hybrid Remote", "Hybrid Worker".
   `\\bhybrid[\\s-]+(?:${WORK_NOUNS})\\b`,
-  // "Hybrid (3 days in office)", "hybrid, 2 days a week", "hybrid - 3 days onsite".
-  '\\bhybrid\\s*[(,:\\-–—]\\s*(?:\\d|one|two|three|four|minimum|at\\s+least|\\w+\\s+days?)',
-  // A label's value: "Location: Hybrid", "Work Model: Hybrid", "Workplace type - Hybrid".
-  '\\b(?:location|workplace(?:\\s+type)?|work\\s*(?:mode|model|type|arrangement|style|setting|location|environment|schedule)|' +
-    'arrangement|position\\s+type|job\\s+type|remote\\s+type|employment\\s+type|schedule|site)\\s*[:\\-–—]\\s*' +
-    '(?:[\\w .,/&]{0,30}?[,/|\\-–—]\\s*)?hybrid\\b',
-  // A tag: "(Hybrid)", "[Hybrid]", "Engineer - Hybrid", "Hybrid | Austin".
-  '[(\\[]\\s*hybrid\\s*[)\\]]', '[\\-–—|]\\s*hybrid\\s*(?:$|[,.;|)(\\-–—])', '^\\s*hybrid\\s*(?:$|[,;|\\-–—:(])',
-  // Beside another mode: "remote or hybrid", "hybrid/on-site", "on-site, hybrid or remote".
-  `\\b${OTHER_MODE}\\s*(?:,|/|\\bor\\b|\\band\\b|&)\\s*(?:a\\s+)?hybrid\\b${NOT_A_THING}`,
-  `\\bhybrid\\s*(?:,|/|\\bor\\b|\\band\\b|&)\\s*(?:fully\\s+)?${OTHER_MODE}`,
+  // "Hybrid (3 days in office)", "hybrid, 2 days a week", "hybrid - 3 days onsite", "Hybrid: Tuesday".
+  '\\bhybrid\\s*[(,:\\-–—]\\s*(?:\\d|one|two|three|four|minimum|at\\s+least|\\w+\\s+days?|(?:mon|tues?|wed|thu|fri)\\w*)',
+  // A label's value, with or without a colon or a bullet: "Location: Hybrid", "Work Model Hybrid",
+  // "Work modality: Hybrid", "Working Arrangement Hybrid", "WORK MODE: • Hybrid/Split".
+  `\\b${LABEL}\\s*[:\\-–—]?\\s*(?:[•·*]\\s*)?(?:[\\w .,/&]{0,30}?[,/|\\-–—]\\s*)?hybrid\\b${NOT_A_THING}`,
+  // The employer's tags: "#LI-Hybrid", "#Hybrid"; "flexible-hybrid careers".
+  '#(?:li[\\s-]*)?hybrid\\b', '\\bflexible[\\s-]+hybrid\\b',
+  // "This role is categorized as hybrid".
+  `\\b(?:is|are)\\s+(?:categori[sz]ed|classified|considered|designated|structured|set\\s+up)\\s+as\\s+(?:a\\s+)?hybrid\\b${NOT_A_THING}`,
+  // A tag: "(Hybrid)", "(Hybrid - NYC)", "[Hybrid]", "Engineer - Hybrid", "Hybrid | Austin", "Derby/hybrid)".
+  `[(\\[]\\s*hybrid\\b${NOT_A_THING}`, '[\\-–—|/]\\s*hybrid\\s*(?:$|[,.;|)(\\-–—])', '^\\s*hybrid\\s*(?:$|[,;|\\-–—:(])',
+  // Beside another mode: "remote or hybrid", "hybrid/on-site", "hybrid, or fully remote", "Hybrid or flexible work".
+  `\\b${OTHER_MODE}\\s*(?:,|/|\\bor\\b|\\band\\b|&)?\\s*(?:a\\s+)?hybrid\\b${NOT_A_THING}`,
+  `\\bhybrid\\s*(?:,\\s*)?(?:,|/|\\bor\\b|\\band\\b|&)\\s*(?:fully\\s+)?${OTHER_MODE}`,
   // After the role: "this role is hybrid", "the position will be hybrid", "we work hybrid".
-  '\\b(?:role|position|job|opportunity|schedule|arrangement|team|we)\\s+(?:is|are|will\\s+be|would\\s+be|can\\s+be|work|works)\\s+' +
+  '\\b(?:role|position|job|opportunity|schedule|arrangement|team|we|mode|model|set-?up)\\s+(?:is|are|will\\s+be|would\\s+be|can\\s+be|work|works)\\s+' +
     `(?:currently\\s+|fully\\s+|a\\s+)?hybrid\\b${NOT_A_THING}`,
+  // The office or home in the same sentence: "a hybrid approach including required in-office days",
+  // "a hybrid approach, with teams in the office", "hybrid sales environment (home office and in-field".
+  `\\bhybrid\\b${NOT_A_THING}[^.;!?•]{0,80}?\\b(?:in[\\s-]?office|in\\s+the\\s+office|office\\s+days?|days?\\s+(?:in|at)\\s+(?:the\\s+)?office|` +
+    'on[\\s-]?site|in[\\s-]person|from\\s+home|home\\s*(?:/\\s*)?office|days?\\s+(?:a|per)\\s+week)\\b',
 ].join('|'), 'i');
 
 // "hybrid in Austin", "Hybrid out of our Denver office": a capitalised place, read with case.
@@ -50,7 +68,8 @@ const HYBRID_WORD = /\bhybrid\b/i;
 
 /** Whether `text` (a title or description) names hybrid as a work arrangement. */
 function statesHybridWork(text) {
-  const s = String(text || '').replace(/\s+/g, ' ');
+  // Tags out first: a posting's "<strong>Work Model:</strong> Hybrid" is the label and its value.
+  const s = String(text || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
   return HYBRID_WORD.test(s) && (HYBRID_WORK.test(s) || HYBRID_IN_PLACE.test(s));
 }
 
