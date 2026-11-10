@@ -1,4 +1,5 @@
 const { withoutRemoteBoilerplate } = require('./remote-boilerplate');
+const { jobStatesHybrid } = require('./hybrid-work');
 
 /**
  * Extraction utilities for enriching job data from descriptions.
@@ -228,8 +229,10 @@ const FULL_REMOTE_INTL = new RegExp([
 // headquarters ("our home office in Louisville"), a stipend or an insurance product, and "3 days
 // per week" as often a shift pattern, as a work model. \b on both ends of "hybrid": Word-exported
 // HTML carries "hybridMultilevel" in its list markup.
+// The English word itself is read by hybrid-work.js (jobStatesHybrid): only as a work arrangement,
+// never "hybrid crypto schemes" or "hybrid cloud".
 const HYBRID_INTL = new RegExp([
-  '\\bhybrid\\b', '\\bhybride[nrs]?\\s+(?:arbeit\\w*|modell\\w*|werken|work\\w*|model|arbeitsmodell|arbeitsweise)', '\\bwerkplek:?\\s*hybride\\b', '\\bibrid[oa]\\b', '\\bh[ií]brid[oa]\\b', '\\bsmart[\\s-]?working\\b',
+  '\\bhybride[nrs]?\\s+(?:arbeit\\w*|modell\\w*|werken|work\\w*|model|arbeitsmodell|arbeitsweise)', '\\bwerkplek:?\\s*hybride\\b', '\\bibrid[oa]\\b', '\\bh[ií]brid[oa]\\b', '\\bsmart[\\s-]?working\\b',
   '\\blavoro agile\\b', '\\bdeels thuis\\b', // A few office days a quarter or a year is a remote job with meetups, not hybrid.
   'pr(?:ä|ae)senz(?:tag|zeit)(?:e|en)?\\b(?!\\s+(?:pro|im|per|je)\\s+(?:quartal|jahr|halbjahr))',
   '\\b(?:homeoffice|home-office|mobil(?:es|em)? arbeiten)\\b.{0,60}\\b(?:büro|buero|vor ort|standort)',
@@ -324,16 +327,17 @@ function extractWorkplaceType(title, location, description) {
   if (LOCATION_IS_GLOBAL.test(location || '')) return 'remote';
 
   const fields = [title, location, description].filter(Boolean).join(' ').toLowerCase();
+  const hybrid = HYBRID_INTL.test(fields) || jobStatesHybrid(title, location, description);
 
   // Unless hybrid is named too: "hasta 20 días al año de trabajo 100% remoto" is a perk on a hybrid
   // job, and "ob voll remote oder in einem unserer Büros" offers a choice.
-  if (FULL_REMOTE_INTL.test(fields) && !HYBRID_INTL.test(fields)) return 'remote';
+  if (FULL_REMOTE_INTL.test(fields) && !hybrid) return 'remote';
   // Remote only when the job is said to be worked that way, not on the word: see statesRemote.
   if (REMOTE_IN_HEAD.test(`${title || ''} ${location || ''}`) || statesRemote(title, description)) {
-    if (HYBRID_INTL.test(fields)) return 'hybrid';
+    if (hybrid) return 'hybrid';
     return 'remote';
   }
-  if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || HYBRID_INTL.test(fields) || OFFICE_DAYS.test(fields)) return 'hybrid';
+  if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || hybrid || OFFICE_DAYS.test(fields)) return 'hybrid';
   if (HOME_WORK_INTL.test(fields)) return 'hybrid';
   if (/\bon-site\b|\bonsite\b|\bin-office\b|\bin office\b|\bon site\b/.test(fields)) return 'onsite';
 
