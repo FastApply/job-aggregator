@@ -35,6 +35,21 @@ function extractSalary(description) {
   return {};
 }
 
+/**
+ * SmartRecruiters' own work model. Every posting's location carries `remote` and `hybrid`
+ * booleans, so both false is the employer saying on-site, not "unknown". Left null, a later
+ * reader of the text could tag the row remote: on 2026-11-10 all 130 sampled SmartRecruiters rows
+ * the board flagged remote with no work model were on-site in SmartRecruiters (186 Domino's store
+ * jobs among them), and First Apply judged 297 of them for remote-only searches in a week, each
+ * refused as on-site by the employer's own setting. Null only when the API leaves the fields out.
+ */
+function srWorkplaceType(location) {
+  if (location?.remote === true) return 'remote';
+  if (location?.hybrid === true) return 'hybrid';
+  if (location?.remote === false && location?.hybrid === false) return 'onsite';
+  return null;
+}
+
 async function fetchJobs(clientname) {
   const allJobs = [];
   let offset = 0;
@@ -70,7 +85,7 @@ async function fetchJobs(clientname) {
           title: job.name,
           department: job.department?.label || null,
           location: job.location?.fullLocation || job.location?.city || 'Remote',
-          workplace_type: job.location?.remote ? 'remote' : (job.location?.hybrid ? 'hybrid' : null),
+          workplace_type: srWorkplaceType(job.location),
           employment_type: job.typeOfEmployment?.label || null,
           salary_min: salary.salary_min || null,
           salary_max: salary.salary_max || null,
@@ -97,4 +112,4 @@ async function fetchJobs(clientname) {
   };
 }
 
-module.exports = { fetchJobs };
+module.exports = { fetchJobs, srWorkplaceType };
