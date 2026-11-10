@@ -15,8 +15,8 @@
  *
  * Rewrites a row only when its text has the word, its location does not, and the reader no
  * longer calls it hybrid; workplace_type, is_remote and remote_worldwide are re-derived the way the
- * crawl derives them. Only on the ATSes whose adapter sends no work model of its own (NO_WORK_MODEL,
- * as backfill-remote-flag.js), and only crawl rows (external_id "<ats>_..."): on an ATS that sends
+ * crawl derives them. Only on the ATSes whose adapter sends no work model of its own (NO_WORK_MODEL),
+ * and only crawl rows (external_id "<ats>_..."): on an ATS that sends
  * one the stored Hybrid may be the employer's word. The index trigger queues each changed row, so
  * this waits while the outbox holds MAX_OUTBOX rows. Walks the primary key, resumable from CKPT.
  *
@@ -31,13 +31,12 @@ const { classifyJob } = require('../src/utils/classify');
 
 const HYBRID_WORD = /\bhybrid\b/i;
 
-// The same population as backfill-remote-flag.js: adapters that set workplace_type to null, or
-// only from the title/location. BambooHR (locationType 2) and UKG (JobLocationType 0) send hybrid
-// on some rows and are crawled on schedule, so a tag the ATS itself states comes back.
+// Adapters that set workplace_type to null, or only from the title/location (backfill-remote-flag.js's
+// list without BambooHR and UKG: their own codes, locationType 2 and JobLocationType 0, ARE hybrid,
+// so a stored Hybrid there may be the employer's word with "hybrid cloud" in the text beside it).
 const NO_WORK_MODEL = [
   'greenhouse', 'workday', 'successfactors', 'taleo', 'avature', 'brassring', 'personio',
   'reachmee', 'varbi', 'visma', 'adp', 'adp_workforcenow', 'manatal', 'silkroad', 'jazzhr', 'jobvite',
-  'bamboohr', 'ukg',
 ];
 
 /** Pure. The row's new tags, or null when it stays as stored. */
