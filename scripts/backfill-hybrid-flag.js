@@ -22,7 +22,7 @@
  *
  * Env: BATCH (5000 ids per step) · MAX_OUTBOX (20000) · POLL_MS (20000) · CKPT · ATS (comma list,
  * overrides NO_WORK_MODEL) · SAMPLE (percent, shadow only: one id window in every 100/SAMPLE) · SHOW
- * (rows to print, default 25)
+ * (rows to print, default 25) · ALL=1 (also rows that become untagged or on-site, not only remote)
  */
 const fs = require('fs');
 const { stripHtml } = require('../src/utils/html');
@@ -39,14 +39,21 @@ const NO_WORK_MODEL = [
   'reachmee', 'varbi', 'visma', 'adp', 'adp_workforcenow', 'manatal', 'silkroad', 'jazzhr', 'jobvite',
 ];
 
-/** Pure. The row's new tags, or null when it stays as stored. */
-function retag(row) {
+/**
+ * Pure. The row's new tags, or null when it stays as stored. By default only a row that becomes
+ * REMOTE is retagged: that is the harm (a remote job out of remote searches and refused for
+ * remote-only candidates, as Solidigm was). Text cannot list every way a posting says hybrid, so a
+ * row the reader merely leaves untagged or calls on-site keeps its stored Hybrid unless all is set:
+ * the 2026-11-10 shadow found real hybrid wordings in a share of those.
+ */
+function retag(row, { all = false } = {}) {
   const plain = stripHtml(row.description || '');
   if (!HYBRID_WORD.test(`${row.title || ''} ${plain}`)) return null;
   if (HYBRID_WORD.test(String(row.location || ''))) return null;
   const workplace = extractWorkplaceType(row.title, row.location, plain);
   if (workplace === 'hybrid') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
+  if (!all && !tags.is_remote) return null;
   return { workplace, is_remote: !!tags.is_remote, remote_worldwide: !!tags.remote_worldwide };
 }
 
@@ -63,6 +70,7 @@ async function main() {
   const POLL_MS = parseInt(process.env.POLL_MS || '20000', 10);
   const SHOW = parseInt(process.env.SHOW || '25', 10);
   const CKPT = process.env.CKPT || '/tmp/hybrid-flag-backfill.pos';
+  const ALL = process.env.ALL === '1';
   const ATS = process.env.ATS ? process.env.ATS.split(',').map((a) => a.trim()).filter(Boolean) : NO_WORK_MODEL;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const run = async (sql, params = []) => {
@@ -94,7 +102,7 @@ async function main() {
     }
   };
 
-  console.log(`mode: ${APPLY ? 'APPLY' : 'SHADOW'}${SAMPLE ? ` (${SAMPLE}% sample)` : ''} · ats: ${ATS.join(',')}`);
+  console.log(`mode: ${APPLY ? 'APPLY' : 'SHADOW'}${SAMPLE ? ` (${SAMPLE}% sample)` : ''}${ALL ? ' · all retags' : ' · remote retags only'} · ats: ${ATS.join(',')}`);
   {
     const { rows: [b] } = await run('SELECT MIN(id) AS lo, MAX(id) AS hi FROM jobs');
     let from = Number(b.lo) - 1;
@@ -111,7 +119,7 @@ async function main() {
       scanned += rows.length;
       const ids = [], wts = [], rem = [], ww = [];
       for (const row of rows) {
-        const t = retag(row);
+        const t = retag(row, { all: ALL });
         if (!t) continue;
         tally(row, t);
         ids.push(row.id); wts.push(normalizeWorkplaceType(t.workplace)); rem.push(t.is_remote); ww.push(t.remote_worldwide);

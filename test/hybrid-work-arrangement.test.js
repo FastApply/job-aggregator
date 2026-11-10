@@ -94,7 +94,16 @@ test('the work-model wordings the shadow sample found count', () => {
     'impactful, flexible-hybrid careers', 'We are proud to be a hybrid organization that offers flexibility.',
     'Flexible Work Arrangements: Hybrid', 'a hybrid home/office workplace', 'flexible, agile and hybrid ways of working',
     'Telework Type: Hybrid', "This position's work mode is hybrid.", 'Tokyo Osaka - Office Remote Hybrid',
-    'Working place: Hybrid', '<p>Location:</strong> London | <strong>Work Model:</strong> Hybrid</span></p>',
+    'Working place: Hybrid', 'Spring 2027 internships will be hybrid.', 'Work Flexibility: Hybrid',
+    'Flexible work: hybrid or full-time from our office in Monterrey', 'we have a hybrid-hub model',
+    'Remote-first flexibility - work from home, the office, or hybrid', 'Flexible, hybrid and agile working',
+    'Location: Indianapolis, IN - Global Headquarters • Hybrid', 'Gleitzeitmodell und hybrid (remote und im Office)',
+    'the availability to work in a hybrid setting 32 hrs/wk', 'hybrid-flex work arrangements',
+    'full-time work in the office or hybrid type of work is possible', 'Location: Vadodara (Client office, Hybrid)',
+    'Physically located in and working hybrid from our (Irvine, CA) Office.', 'Working Pattern: Hybrid, with flexibility to work remotely',
+    'Hybrid telecommuting from within the U.S. permitted', 'You will work in a Hybrid based environment',
+    'Hybrid telepsychiatry schedule', 'Work Location Type: Hybrid',
+    'Clinical Therapist (LMSW, LCSW, LMHC) - Hybrid Forest Hills- Full Time or Part Time', '<p>Location:</strong> London | <strong>Work Model:</strong> Hybrid</span></p>',
   ]) {
     assert.strictEqual(statesHybridWork(text), true, text);
   }
