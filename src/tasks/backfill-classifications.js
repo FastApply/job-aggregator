@@ -56,8 +56,11 @@ async function backfillClassifications() {
         `UPDATE jobs SET
           visa_sponsorship = COALESCE(?, visa_sponsorship, 'unknown'),
           experience_level = COALESCE(?, experience_level),
-          is_remote = COALESCE(?, is_remote),
-          remote_worldwide = COALESCE(?, remote_worldwide)
+          -- A work model the ATS states (workplace_type) is the employer's own word, and the crawl
+          -- already derived the flags from it. The model only fills them for a row with none: it
+          -- called on-site SmartRecruiters store jobs remote (Dominos, 2026-11-10).
+          is_remote = CASE WHEN workplace_type IS NOT NULL THEN is_remote ELSE COALESCE(?, is_remote) END,
+          remote_worldwide = CASE WHEN workplace_type IS NOT NULL THEN remote_worldwide ELSE COALESCE(?, remote_worldwide) END
         WHERE id = ?`,
         [
           classification.visa_sponsorship,
