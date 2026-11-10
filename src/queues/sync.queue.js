@@ -9,6 +9,7 @@ const { extractSalary, extractWorkplaceType, extractEmploymentType } = require('
 const { stripHtml } = require('../utils/html');
 const metrics = require('../utils/metrics');
 const { classifyJob } = require('../utils/classify');
+const { boardMissOutcome, RETRY_MIN: BOARD_MISS_RETRY_MIN } = require('../utils/board-miss');
 
 const QUEUE_NAME = 'sync';
 
@@ -169,7 +170,12 @@ function createSyncWorker() {
     if (job?.data?.companyId && job.attemptsMade >= job.opts.attempts) {
       // Don't permanently fail companies for rate limiting — they'll succeed next cycle
       if (err.message.includes('429')) return;
-      await companiesRepo.markFailed(job.data.companyId, err.message);
+      // One bad sync is not proof the board is gone: a platform outage looks identical. Record
+      // the miss and retire only once it has held for a week (src/utils/board-miss.js).
+      const company = await companiesRepo.findById(job.data.companyId);
+      const { retire, message } = boardMissOutcome(company?.error_message, err.message);
+      if (retire) await companiesRepo.markFailed(job.data.companyId, message);
+      else await companiesRepo.recordMiss(job.data.companyId, message, BOARD_MISS_RETRY_MIN);
     }
   });
 

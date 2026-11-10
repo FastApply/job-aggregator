@@ -39,9 +39,11 @@ const DELAY_MS = parseInt(process.env.DELAY_MS || '0'); // per-company delay to 
 const ONCE = process.env.ONCE === '1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const { runPool } = require('../src/utils/rolling-pool');
+const { boardMissOutcome, RETRY_MIN: BOARD_MISS_RETRY_MIN } = require('../src/utils/board-miss');
 
 // A dead board / malformed slug (404, 400, gone) will never succeed — mark it
-// 'failed' so it drops out of the queue instead of re-looping forever. Rate limits
+// 'failed' so it drops out of the queue instead of re-looping forever, once the miss has
+// held for a week (src/utils/board-miss.js; one 404 can be an outage). Rate limits
 // / timeouts / connection blips are transient — retry those soon.
 //
 // "could not discover config" is deliberately NOT here any more: one missed Workday discovery was
@@ -184,9 +186,16 @@ async function crawlCompany(co) {
               await query(`UPDATE companies SET error_message = ?, last_synced_at = NOW() + INTERVAL '${Math.max(0, DISCOVERY_RETRY_MIN - STALE_MIN)} minutes' WHERE id = ?`, [message, co.id]);
             }
           } else if (isPermanentError(e.message) && !proxy.enabled) {
-            // dead board / bad slug — retire it so it stops clogging the queue
-            await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [String(e.message).slice(0, 200), co.id]);
-            retired++;
+            // Looks like a dead board / bad slug — but a platform outage looks the same for one
+            // sync (BambooHR 2026-10-19..21 failed 18,610 live boards this way). Retire only once
+            // the miss has held for a week; until then hold the board back and try again later.
+            const { retire, message } = boardMissOutcome(co.error_message, e.message);
+            if (retire) {
+              await query("UPDATE companies SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?", [message, co.id]);
+              retired++;
+            } else {
+              await query(`UPDATE companies SET error_message = ?, last_synced_at = NOW() + INTERVAL '${Math.max(0, BOARD_MISS_RETRY_MIN - STALE_MIN)} minutes' WHERE id = ?`, [message, co.id]);
+            }
           } else {
             // transient (rate limit / timeout / drop) — re-due in ~10 min
             await query(`UPDATE companies SET last_synced_at = NOW() - INTERVAL '${Math.max(0, STALE_MIN - 10)} minutes' WHERE id = ?`, [co.id]);

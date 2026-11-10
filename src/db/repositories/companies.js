@@ -155,9 +155,24 @@ const companiesRepo = {
     );
   },
 
-  async updateLastSynced(id) {
+  // A miss that did not retire the board (src/utils/board-miss.js): keep it active, remember the
+  // miss, and hold it back retryMin minutes. findDueForSync takes boards stale by 60 minutes, so
+  // last_synced_at is set that far ahead of the retry time; without it a missed board stays the
+  // oldest of its platform and leads every fanout, and an outage would crowd out healthy boards.
+  async recordMiss(id, errorMessage, retryMin = 360) {
+    const dueAt = new Date(Date.now() + (Math.max(60, retryMin) - 60) * 60000).toISOString();
     await query(
-      "UPDATE companies SET last_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+      "UPDATE companies SET error_message = ?, last_synced_at = ?, updated_at = datetime('now') WHERE id = ? AND status = 'active'",
+      [errorMessage, dueAt, id]
+    );
+  },
+
+  async updateLastSynced(id) {
+    // A good sync ends any run of misses.
+    await query(
+      `UPDATE companies SET last_synced_at = datetime('now'), updated_at = datetime('now'),
+         error_message = CASE WHEN error_message LIKE '%(missing since %' THEN NULL ELSE error_message END
+       WHERE id = ?`,
       [id]
     );
   },
