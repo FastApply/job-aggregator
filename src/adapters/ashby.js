@@ -1,3 +1,5 @@
+const { withCountry } = require('../utils/place-country');
+
 async function fetchJobs(clientname) {
   const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(clientname)}?includeCompensation=true`);
   if (!res.ok) throw new Error(`Ashby HTTP ${res.status}`);
@@ -8,7 +10,9 @@ async function fetchJobs(clientname) {
       external_id: `ashby_${job.id}`,
       title: job.title,
       department: job.department || job.team || null,
-      location: job.location || 'Remote',
+      // Ashby's own address field names the country a bare place leaves out ("Berlin Office"):
+      // without it the posting was in no country search (place-country.js).
+      location: withCountry(job.location, { name: job.address?.postalAddress?.addressCountry }) || 'Remote',
       workplace_type: job.workplaceType || null,
       employment_type: job.employmentType || null,
       salary_min: comp?.compensationTierSummary?.[0]?.min || null,

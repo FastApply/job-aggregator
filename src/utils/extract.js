@@ -303,7 +303,7 @@ const REMOTE_STATEMENT = new RegExp([
 
 function statesRemote(title, description) {
   const text = withoutRemoteBoilerplate(String(description || '').replace(/\s+/g, ' '));
-  if (!text || NOT_REMOTE_EN.test(text) || OFFICE_DAYS.test(text)) return false;
+  if (!text || NOT_REMOTE_EN.test(text) || REMOTE_FIELD_NO.test(text) || OFFICE_DAYS.test(text)) return false;
   if (REMOTE_STATEMENT.test(text)) return true;
   // "Ajaia is hiring a remote Product Manager": the word against the job's own title.
   const name = String(title || '').trim().toLowerCase();
@@ -362,6 +362,11 @@ const STRONG_REMOTE_EN = new RegExp([
 // (Kimley-Horn, on every posting), "fully remote work is not available", "does not apply to fully
 // remote roles", "exceptions will be granted for those in fully remote status".
 const NOT_REMOTE_EN = /\bnot\s+(?:an?\s+)?(?:\w+\s+)?remote\b|\bnot\s+suitable\s+for\s+(?:fully\s+)?remote\b|\bwork\s+remotely\s*:?\s*no\b|\botherwise\s+indicated\s+as\s+(?:fully\s+)?remote\b|\bto\s+fully\s+remote\b|\boccasional\s+(?:wfh|remote|work\s+from\s+home)\b|\bnon[\s-]remote\b|\bno\s+remote\b|\bremote(?:\s+work)?\s+is\s+not\b|\bdoes\s+not\s+apply\s+to\s+(?:fully\s+)?remote\b|\bexceptions?\b.{0,80}\bremote\b/i;
+// An ATS field answered no: Celestica's SuccessFactors postings carry "Remote Position: No" on
+// every on-site role, and "Remote Position" alone read as remote (556 of its 645 remote-tagged rows,
+// a production operator in Johor Bahru among them, supply loop 2026-11-11). "Remote: No",
+// "Remote Work: No", "Remote Eligible? No" are the same field.
+const REMOTE_FIELD_NO = /\bremote(?:\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity))?\s*\??\s*:\s*no\b|\bremote\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity)\s*\??\s*[-–—]\s*no\b/i;
 // Remote as part of a thing, not a work model: "Senior Program Manager - Remote Sensing".
 const REMOTE_IN_HEAD = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))|\btelecommute\b|\bwork from home\b/i;
 
@@ -377,7 +382,7 @@ function extractWorkplaceTypeFromDescription(title, location, description) {
   const head = `${title || ''} ${location || ''}`;
   if (REMOTE_IN_HEAD.test(head) || LOCATION_IS_GLOBAL.test(location || '')) return 'remote';
   const text = String(description || '');
-  if (NOT_REMOTE_EN.test(text)) return null;
+  if (NOT_REMOTE_EN.test(text) || REMOTE_FIELD_NO.test(text)) return null;
   if (FULL_REMOTE_INTL.test(text) || STRONG_REMOTE_EN.test(text)) return 'remote';
   return null;
 }
@@ -445,4 +450,4 @@ function normalizeWorkplaceType(raw) {
   return null;
 }
 
-module.exports = { isOtherMoney, extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES, normalizeWorkplaceType, WORKPLACE_TYPES };
+module.exports = { REMOTE_FIELD_NO, isOtherMoney, extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES, normalizeWorkplaceType, WORKPLACE_TYPES };
