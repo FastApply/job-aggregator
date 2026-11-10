@@ -132,3 +132,9 @@ test('the other hybrids the shadow sample found do not', () => {
     assert.strictEqual(statesHybridWork(text), false, text);
   }
 });
+
+test("Booz Allen's per-mode policy names no mode for this job", () => {
+  const text =
+    'Employees working virtually are generally expected to have their cameras on. • Remote: If this position is listed as remote, there may still be occasions when you are required to work in person at a Booz Allen or customer facility. • Hybrid: If this position is listed as hybrid, you will be expected to work from a Booz Allen or customer facility. • Onsite: If this position is listed as onsite, you will work from a Booz Allen or customer facility.';
+  assert.strictEqual(extractWorkplaceType('Cloud Computing Infrastructure Architect, Mid', 'Warner Robins, GA', text), null);
+});

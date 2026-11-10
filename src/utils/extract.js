@@ -326,8 +326,11 @@ function extractWorkplaceType(title, location, description) {
   // fails the anchored match above and falls through to the normal rules.
   if (LOCATION_IS_GLOBAL.test(location || '')) return 'remote';
 
-  const fields = [title, location, description].filter(Boolean).join(' ').toLowerCase();
-  const hybrid = HYBRID_INTL.test(fields) || jobStatesHybrid(title, location, description);
+  // Policy sentences for every mode ("If this position is listed as onsite, ...") name none for
+  // this job (remote-boilerplate.js), so no reader here sees them.
+  const body = withoutRemoteBoilerplate(String(description || ''));
+  const fields = [title, location, body].filter(Boolean).join(' ').toLowerCase();
+  const hybrid = HYBRID_INTL.test(fields) || jobStatesHybrid(title, location, body);
 
   // Unless hybrid is named too: "hasta 20 días al año de trabajo 100% remoto" is a perk on a hybrid
   // job, and "ob voll remote oder in einem unserer Büros" offers a choice.
