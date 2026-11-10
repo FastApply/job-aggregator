@@ -33,7 +33,7 @@ const OTHER_MODE =
   '(?:remote(?:ly)?|on-?site|in-?office|in-?person|office-based|work\\s+from\\s+home|wfh|flexible\\s+work(?:ing)?|' +
   '(?:the\\s+)?office|full[\\s-]?time\\s+(?:from|in|at)\\s+(?:our|the)\\s+office|agile\\s+working)';
 const LABEL =
-  '(?:location|workplace(?:\\s+type)?|work(?:ing)?\\s*(?:mode|modality|model|type|arrangements?|style|setting|location|environment|schedule|place|pattern|location\\s+type|flexibility)|flexible\\s+work(?:ing)?|' +
+  '(?:location|workplace(?:\\s+type)?|work(?:ing)?\\s*(?:mode|modality|model|type|arrangements?|style|setting|location|environment|schedule|place|pattern|location\\s+type|flexibility)|flexible\\s+work(?:ing)?|remote\\s+position|' +
   'arrangements?|position\\s+type|job\\s+type|remote\\s+type|telework\\s+type|employment\\s+type|schedule|site|' +
   'on-?site\\s+or\\s+remote|remote\\s+or\\s+on-?site|flexible\\s+work(?:ing)?\\s+arrangements?|arbeitsmodell|modalidad|modalit[àa])';
 
@@ -68,8 +68,9 @@ const HYBRID_WORK = new RegExp([
 
 // "hybrid in Austin", "Hybrid out of our Denver office": a capitalised place, read with case.
 // A title's tag before the place: "Clinical Therapist - Hybrid Forest Hills".
+// And after it, at the end of a title or line: "UX Designer - Barcelona Hybrid", "Karlsruhe oder London, Hybrid".
 const HYBRID_IN_PLACE =
-  /\b[Hh]ybrid\s+(?:in|at|from|out\s+of|based\s+in|near)\s+(?:our\s+|the\s+)?[A-Z][a-z]|[-–—|]\s*[Hh]ybrid\s+(?!(?:Cloud|Infrastructure|Integration|Data|Systems?|Solutions?|Apps?|Applications?|Networks?|Storage|Energy|Vehicles?|Power|Retrieval|Search|Work|Remote)\b)[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s*(?:$|[-–—|,(])/;
+  /[-–—|,]\s*[A-Z][a-zäöüé]+(?:\s+[A-Z][a-zäöüé]+)?\s+[Hh]ybrid\s*$|,\s*[Hh]ybrid(?![\s-]+(?:[Cc]loud|IT|[Ii]nfrastructure|[Ee]nvironments|[Ss]olutions?|[Dd]eployments?)\b)(?=\s*(?:$|[.;|•]|\s+[A-ZÄÖÜ]))|\b[Hh]ybrid\s+(?:in|at|from|out\s+of|based\s+in|near)\s+(?:our\s+|the\s+)?[A-Z][a-z]|[-–—|]\s*[Hh]ybrid\s+(?!(?:Cloud|Infrastructure|Integration|Data|Systems?|Solutions?|Apps?|Applications?|Networks?|Storage|Energy|Vehicles?|Power|Retrieval|Search|Work|Remote)\b)[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s*(?:$|[-–—|,(])/;
 const HYBRID_WORD = /\bhybrid\b/i;
 
 /** Whether `text` (a title or description) names hybrid as a work arrangement. */
@@ -83,8 +84,13 @@ function statesHybridWork(text) {
  * The same for a job's fields: the location counts on the word alone (it names places and work
  * modes, not technology), the title and description only in work-arrangement wording.
  */
+// A title that opens with the mode: "Hybrid Immunization Specialist (Vaccines) Winchester, VA".
+const TITLE_OPENS_HYBRID =
+  /^\s*hybrid\s+(?!(?:cloud|it|infrastructure|integration|data|systems?|solutions?|apps?|applications?|networks?|storage|energy|vehicles?|power|retrieval|search|bonding|product|engineer|architect|rn|nurse|care)\b)/i;
+
 function jobStatesHybrid(title, location, description) {
   if (HYBRID_WORD.test(String(location || ''))) return true;
+  if (TITLE_OPENS_HYBRID.test(String(title || ''))) return true;
   return statesHybridWork(title) || statesHybridWork(description);
 }
 
