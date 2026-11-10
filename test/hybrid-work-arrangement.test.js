@@ -94,7 +94,8 @@ test('the work-model wordings the shadow sample found count', () => {
     'impactful, flexible-hybrid careers', 'We are proud to be a hybrid organization that offers flexibility.',
     'Flexible Work Arrangements: Hybrid', 'a hybrid home/office workplace', 'flexible, agile and hybrid ways of working',
     'Telework Type: Hybrid', "This position's work mode is hybrid.", 'Tokyo Osaka - Office Remote Hybrid',
-    'Working place: Hybrid', 'Spring 2027 internships will be hybrid.', 'Work Flexibility: Hybrid',
+    'Working place: Hybrid', 'Remote Position: Hybrid Region: Asia', 'UX Designer - Barcelona Hybrid',
+    'ICIS – Karlsruhe oder London, Hybrid Über ICIS', 'Spring 2027 internships will be hybrid.', 'Work Flexibility: Hybrid',
     'Flexible work: hybrid or full-time from our office in Monterrey', 'we have a hybrid-hub model',
     'Remote-first flexibility - work from home, the office, or hybrid', 'Flexible, hybrid and agile working',
     'Location: Indianapolis, IN - Global Headquarters • Hybrid', 'Gleitzeitmodell und hybrid (remote und im Office)',
@@ -137,4 +138,10 @@ test("Booz Allen's per-mode policy names no mode for this job", () => {
   const text =
     'Employees working virtually are generally expected to have their cameras on. • Remote: If this position is listed as remote, there may still be occasions when you are required to work in person at a Booz Allen or customer facility. • Hybrid: If this position is listed as hybrid, you will be expected to work from a Booz Allen or customer facility. • Onsite: If this position is listed as onsite, you will work from a Booz Allen or customer facility.';
   assert.strictEqual(extractWorkplaceType('Cloud Computing Infrastructure Architect, Mid', 'Warner Robins, GA', text), null);
+});
+
+test('a title that opens with the mode is hybrid, one that names a hybrid thing is not', () => {
+  assert.strictEqual(jobStatesHybrid('Hybrid Immunization Specialist (Vaccines) Winchester, VA', 'USA - Virginia - Fairfax', ''), true);
+  assert.strictEqual(jobStatesHybrid('Hybrid Cloud Architect', 'Austin, TX', ''), false);
+  assert.strictEqual(jobStatesHybrid('Engineer', 'Austin, TX', 'Experience with private, public and hybrid cloud, AWS.'), false);
 });

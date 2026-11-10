@@ -56,7 +56,7 @@ function retag(row, { all = false } = {}) {
   const workplace = extractWorkplaceTypeFromDescription(row.title, row.location, plain);
   if (workplace === 'hybrid') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
-  if (!all && !tags.is_remote) return null;
+  if (!all && (workplace !== 'remote' || !tags.is_remote)) return null;
   return { workplace, is_remote: !!tags.is_remote, remote_worldwide: !!tags.remote_worldwide };
 }
 
