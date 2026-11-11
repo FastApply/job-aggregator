@@ -53,6 +53,10 @@ const REMOTE_NEGATIVE = [
   // Hybrid is read by jobStatesHybrid (hybrid-work.js): "hybrid crypto schemes" is no work model.
   /\bremote\s*not\s*available\b/i,
   /\bno\s*remote\b/i,
+  // An ATS field answered no: "Remote Position: No" (Celestica, every on-site role) — the same
+  // field extract.js REMOTE_FIELD_NO reads. Without it REMOTE_POSITIVE's "remote position" won.
+  /\bremote(?:\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity))?\s*\??\s*:\s*no\b/i,
+  /\bremote\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity)\s*\??\s*[-–—]\s*no\b/i,
 ];
 
 function classifyRemote(title, location, workplaceType, description) {
