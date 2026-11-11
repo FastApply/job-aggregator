@@ -98,6 +98,8 @@ const DENIES_OR_PARTIAL = new RegExp([
   '\\boccasional(?:ly)?\\s+(?:\\w+\\s+)?(?:remote|work\\s+from\\s+home)', '\\bremote\\s+(?:work\\s+)?(?:is\\s+)?(?:available\\s+)?once\\s+a\\s+week', '\\bremote\\s+workdays?',
   '\\b\\d+\\s*(?:%|hours?|days?)\\s+(?:of\\s+)?remote', '\\bremote\\s+on\\s+(?:the\\s+)?others', '\\b(?:weeks?|days?)\\s+(?:of\\s+)?work\\s+from\\s+anywhere',
   '\\bwork\\s+from\\s+anywhere\\s+(?:program|days?|weeks?|policy|allowance)', '\\bsome\\s+remote', '\\bpartially\\s+remote', '\\bhybrid\\b', '\\bfor\\s+(?:fully\\s+)?remote\\s+positions\\b',
+  // An ATS field answered no: "Remote Position: No" (Celestica's SuccessFactors postings).
+  '\\bremote(?:\\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity))?\\s*\\??\\s*(?::|\\s[-–—])\\s*no\\b',
   '\\bremote\\s+(?:work\\s+)?(?:may\\s+be\\s+)?(?:possible|considered)\\s+(?:upon|with|on\\s+approval)', '\\bremote\\s+work\\s+as\\s+needed', '\\bpositions\\s+that\\s+are\\s+available\\s+as\\s+remote',
 ].join('|'), 'i');
 const REMOTE_WORD_G = new RegExp(REMOTE_WORD.source, 'gi');
