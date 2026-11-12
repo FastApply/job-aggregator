@@ -21,6 +21,13 @@ test('kept: the posting states a hybrid or in-office arrangement', () => {
     '<p>Remote internship.</p><ul><li><p>Must be enrolled in a full-time degree program.</p></li><li>Hybrid</li></ul>')), null);
 });
 
+test('kept: the title or a "Type:" field says hybrid (second shadow, 2026-11-12)', () => {
+  assert.equal(retag(row('Tax Accountant - Hybrid Portland Metro Area', 'Work From Home OR',
+    '<p>This role can be performed remotely.</p>')), null);
+  assert.equal(retag(row('Community Health Partner - MD', 'MD - Remote',
+    '<p>Job Description: Location: MD Montgomery County Type: Hybrid About the Role. Remote work available.</p>')), null);
+});
+
 test('kept: a remote reading the location does not back', () => {
   // Booz Allen, remote only through the title
   assert.equal(retag(row('Remote and Autonomous Systems Logistician, Senior', 'Washington, DC',

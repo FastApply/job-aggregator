@@ -41,7 +41,7 @@ const REMOTE_LOCATION = /\bremote\b|\bwork(?:ing)?\s+from\s+home\b|\bwfh\b|^\s*h
 // The posting states its arrangement as hybrid or in-office, so the stored Hybrid is the
 // employer's word, not an adjective. Each one is a row of the same shadow: "Role Designation:
 // Hybrid with a requirement to attend our Toronto office", "Hybrid flexible work model.",
-// "In office 5 days per week", and a list item that is the bare word ("<li>Hybrid</li>").
+// "In office 5 days per week", "Type: Hybrid", and a list item that is the bare word ("<li>Hybrid</li>").
 // Booz Allen's boilerplate ("Hybrid: If this position is listed as hybrid ...") is a definition
 // of every model, not this job's, and is deliberately not matched.
 const ARRANGEMENT = [
@@ -49,6 +49,7 @@ const ARRANGEMENT = [
   /\b(?:work(?:place)?\s*(?:model|arrangement|type|style|location)|working\s+(?:model|arrangement)|role\s+designation|location\s+type)\s*:?\s*(?:is\s+)?(?:hybrid|in[- ]office|on[- ]?site|office[- ]based)\b/i,
   /\bhybrid\s+(?:flexible\s+)?(?:work(?:ing)?\s*(?:model|arrangement|schedule|environment|policy)|role|position|schedule)\b/i,
   /^\s*(?:[•*-]\s*)?hybrid\s*\.?\s*$/im,
+  /\btype\s*:\s*hybrid\b/i,
   /<li[^>]*>\s*hybrid\s*<\/li>/i,
 ];
 
@@ -76,6 +77,8 @@ function retag(row, { all = false } = {}) {
   const plain = stripHtml(row.description || '');
   if (!HYBRID_WORD.test(`${row.title || ''} ${plain}`)) return null;
   if (HYBRID_WORD.test(String(row.location || ''))) return null;
+  // The title is the employer's own label ("Tax Accountant - Hybrid Portland Metro Area").
+  if (HYBRID_WORD.test(String(row.title || ''))) return null;
   if (statesArrangement(plain)) return null;
   // The late-fetch reader: remote needs the title or location to say so, or the text to say it
   // unambiguously. Booz Allen's boilerplate ("If this position is listed as remote or hybrid ...")
