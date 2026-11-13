@@ -31,6 +31,33 @@ const { classifyJob } = require('../src/utils/classify');
 
 const HYBRID_WORD = /\bhybrid\b/i;
 
+// A remote retag needs the posting's own location to read remote. On the 2026-11-11 10% shadow,
+// the rows whose location was a city were where the reader went wrong: Booz Allen's Washington, DC
+// logistician (remote only through the title, "Remote and Autonomous Systems") and JazzHR roles in
+// Northville, MI that say "In office 5 days per week". A row the location does not call remote
+// keeps its stored tag.
+const REMOTE_LOCATION = /\bremote\b|\bwork(?:ing)?\s+from\s+home\b|\bwfh\b|^\s*home\b|\bhome[- ](?:based|office)\b|\btelecommut|\banywhere\b|\bvirtual\b/i;
+
+// The posting states its arrangement as hybrid or in-office, so the stored Hybrid is the
+// employer's word, not an adjective. Each one is a row of the same shadow: "Role Designation:
+// Hybrid with a requirement to attend our Toronto office", "Hybrid flexible work model.",
+// "In office 5 days per week", "Type: Hybrid", and a list item that is the bare word ("<li>Hybrid</li>").
+// Booz Allen's boilerplate ("Hybrid: If this position is listed as hybrid ...") is a definition
+// of every model, not this job's, and is deliberately not matched.
+const ARRANGEMENT = [
+  /\b(?:in[- ]office|on[- ]?site|in[- ]person)\s+(?:\d|one|two|three|four|five)\b[^.\n]{0,20}\bdays?\b/i,
+  /\b(?:work(?:place)?\s*(?:model|arrangement|type|style|location)|working\s+(?:model|arrangement)|role\s+designation|location\s+type)\s*:?\s*(?:is\s+)?(?:hybrid|in[- ]office|on[- ]?site|office[- ]based)\b/i,
+  /\bhybrid\s+(?:flexible\s+)?(?:work(?:ing)?\s*(?:model|arrangement|schedule|environment|policy)|role|position|schedule)\b/i,
+  /^\s*(?:[•*-]\s*)?hybrid\s*\.?\s*$/im,
+  /\btype\s*:\s*hybrid\b/i,
+  /<li[^>]*>\s*hybrid\s*<\/li>/i,
+];
+
+/** Pure. True when the text states the job's own arrangement as hybrid or in-office. */
+function statesArrangement(plain) {
+  return ARRANGEMENT.some((re) => re.test(plain));
+}
+
 // Adapters that set workplace_type to null, or only from the title/location (backfill-remote-flag.js's
 // list without BambooHR and UKG: their own codes, locationType 2 and JobLocationType 0, ARE hybrid,
 // so a stored Hybrid there may be the employer's word with "hybrid cloud" in the text beside it).
@@ -50,6 +77,9 @@ function retag(row, { all = false } = {}) {
   const plain = stripHtml(row.description || '');
   if (!HYBRID_WORD.test(`${row.title || ''} ${plain}`)) return null;
   if (HYBRID_WORD.test(String(row.location || ''))) return null;
+  // The title is the employer's own label ("Tax Accountant - Hybrid Portland Metro Area").
+  if (HYBRID_WORD.test(String(row.title || ''))) return null;
+  if (statesArrangement(plain)) return null;
   // The late-fetch reader: remote needs the title or location to say so, or the text to say it
   // unambiguously. Booz Allen's boilerplate ("If this position is listed as remote or hybrid ...")
   // read as remote under the crawl reader once its hybrid stopped counting.
@@ -57,6 +87,7 @@ function retag(row, { all = false } = {}) {
   if (workplace === 'hybrid') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
   if (!all && (workplace !== 'remote' || !tags.is_remote)) return null;
+  if (tags.is_remote && !REMOTE_LOCATION.test(String(row.location || ''))) return null;
   return { workplace, is_remote: !!tags.is_remote, remote_worldwide: !!tags.remote_worldwide };
 }
 
@@ -156,4 +187,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
-module.exports = { retag };
+module.exports = { retag, statesArrangement };
