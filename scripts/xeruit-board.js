@@ -137,6 +137,16 @@ const RESOLVERS = [
   { host: /(^|\.)pinpointhq\.com$/,   fn: (u) => ({ ats: 'pinpoint',   slug: sub(u.hostname), nativeId: null }) },
   { host: /(^|\.)comeet\.co(m)?$/,    fn: () => ({ ats: 'comeet',      slug: null, nativeId: null }) },
   { host: /(^|\.)taleo\.net$/,        fn: (u) => ({ ats: 'taleo',      slug: sub(u.hostname), nativeId: null }) },
+  // {employer}.careerplug.com/jobs/{id}/apps/new — the path id IS the adapter's job id. www/app are CareerPlug's own.
+  {
+    host: /(^|\.)careerplug\.com$/,
+    fn: (u) => {
+      const s = u.hostname.split('.').length > 2 ? sub(u.hostname) : null;
+      if (!s || ['www', 'app', 'api', 'help', 'blog', 'support'].includes(s)) return { ats: 'careerplug', slug: null, nativeId: null };
+      const p = seg(u);
+      return { ats: 'careerplug', slug: s, nativeId: p[0] === 'jobs' && /^\d+$/.test(p[1] || '') ? `careerplug_${p[1]}` : null };
+    },
+  },
 
   // --- platforms with no adapter ---------------------------------------------------------
   // Labelled so the corpus stays queryable by platform, but never marked crawlable. The slug

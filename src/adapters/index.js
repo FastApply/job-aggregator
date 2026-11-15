@@ -43,6 +43,7 @@ const adp_workforcenow = require('./adp_workforcenow');
 const silkroad = require('./silkroad');
 const gem = require('./gem');
 const kula = require('./kula');
+const careerplug = require('./careerplug');
 
 const adapters = {
   greenhouse,
@@ -89,6 +90,7 @@ const adapters = {
   silkroad,
   gem,
   kula,
+  careerplug,
 };
 
 function getAdapter(atsName) {

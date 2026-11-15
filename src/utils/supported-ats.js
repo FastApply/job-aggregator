@@ -26,6 +26,8 @@ const SUPPORTED_ATS = new Set([
   'amazon', 'netflix', 'google',
   // Oracle Fusion (kept)
   'oraclecloud',
+  // 2026-11-15. {slug}.careerplug.com, small-business and franchise boards.
+  'careerplug',
 ]);
 
 // Labels third-party feeds use for a platform we already have an adapter for. Deliberately
