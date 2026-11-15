@@ -202,6 +202,7 @@ const companiesRepo = {
       taleo: `https://${atsSlug}.taleo.net`,
       pinpoint: `https://${atsSlug}.pinpointhq.com`,
       successfactors: `https://${atsSlug}`, // atsSlug is the CSB career host, e.g. jobs.acme.com
+      careerplug: `https://${atsSlug}.careerplug.com/jobs`,
     };
     const careerUrl = boardUrls[ats] || `https://${atsSlug}.com/careers`;
     let domain;

@@ -92,6 +92,8 @@ function deriveCompany(applyUrl, atsHint, companyName, sourceName) {
   else if (host.endsWith('.bamboohr.com')) { ats = 'bamboohr'; slug = sub; careerUrl = `https://${sub}.bamboohr.com`; }
   else if (host.endsWith('.recruitee.com')) { ats = 'recruitee'; slug = sub; careerUrl = `https://${sub}.recruitee.com`; }
   else if (host.endsWith('.breezy.hr')) { ats = 'breezy'; slug = sub; careerUrl = `https://${sub}.breezy.hr`; }
+  // CareerPlug: {employer}.careerplug.com/jobs/{id}/apps/new. www/app are CareerPlug's own hosts.
+  else if (host.endsWith('.careerplug.com') && !['www', 'app', 'api', 'help', 'blog', 'support'].includes(sub)) { ats = 'careerplug'; slug = sub; careerUrl = `https://${sub}.careerplug.com/jobs`; }
   else if (host.includes('teamtailor.com') && sub !== 'teamtailor') { ats = 'teamtailor'; slug = sub; careerUrl = `https://${sub}.teamtailor.com`; }
   // Taleo: the tenant is the subdomain ({tenant}.taleo.net/careersection/...). Without this the
   // generic fallback slugged them "careersection". Taleo Business Edition ({x}.tbe.taleo.net/

@@ -24,6 +24,8 @@ const HTML_PATTERNS = [
   { ats: 'bamboohr', regex: /([^/"'?#&\s]+)\.bamboohr\.com/ },
   { ats: 'taleo', regex: /([^/"'?#&\s]+)\.taleo\.net/ },
   { ats: 'pinpoint', regex: /([^/"'?#&\s]+)\.pinpointhq\.com/ },
+  // careerplug.com links also name CareerPlug's own hosts (www, app), which are never a board.
+  { ats: 'careerplug', regex: /\/\/(?!(?:www|app|api|help|blog|support)\.)([a-z0-9-]+)\.careerplug\.com/i },
   { ats: 'successfactors', regex: /career([^/"'?#&\s]+)\.successfactors\.(?:eu|com)/ },
 ];
 
