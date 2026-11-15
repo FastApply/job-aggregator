@@ -29,6 +29,8 @@ const SUPPORTED_ATS = new Set([
   'dayforce', 'manatal', 'paycom', 'eightfold', 'avature', 'brassring',
   // 2026-10-29 (2714990). adp = myjobs.adp.com; adp_workforcenow = workforcenow.adp.com.
   'ukg', 'adp', 'adp_workforcenow', 'silkroad', 'gem', 'kula',
+  // 2026-11-15. {slug}.careerplug.com, small-business and franchise boards.
+  'careerplug',
 ]);
 
 // Labels third-party feeds use for a platform we already have an adapter for. Deliberately
