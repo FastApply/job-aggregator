@@ -147,6 +147,7 @@ const SUBDOMAIN_TENANT = [
   ['workday', /(^|\.)myworkdayjobs\.com$/],
   ['icims', /(^|\.)icims\.com$/],
   ['taleo', /(^|\.)taleo\.net$/],
+  ['careerplug', /(^|\.)careerplug\.com$/],
 ];
 // Host labels that are the vendor's own, never a tenant.
 const VENDOR_LABELS = new Set(['www', 'jobs', 'careers', 'apply', 'app', 'api', 'ats', 'boards', 'hire', 'recruiting']);

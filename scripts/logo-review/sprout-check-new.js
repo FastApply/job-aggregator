@@ -105,6 +105,7 @@ function atsSlug(url) {
   if (/lever\.co$/.test(h)) return m('lever', seg[0]);
   if (/zohorecruit\./.test(h)) return m('zoho', sub());
   if (/personio\.(com|de)$/.test(h)) return m('personio', sub());
+  if (/(^|\.)careerplug\.com$/.test(h)) return m('careerplug', sub());
 
   // Boards we can identify but have NO adapter for. Naming them is the point: it turns
   // "unidentified" into a costed decision about which adapter is worth writing.
@@ -149,7 +150,7 @@ async function main() {
     'clearcompany.com','ultipro.com','adp.com','paycomonline.net','dayforcehcm.com','isolvedhire.com',
     'jobscore.com','polymer.co','ripplingats.com','fa.ocs.oraclecloud.com','tal.net','eploy.net',
     'peoplehr.net','hrmdirect.com','applicantpro.com','paylocity.com','bamboo.hr','jobdiva.com',
-    'avature.net','phenompeople.com','eightfold.ai','joinhandshake.com','workforcenow.adp.com'])
+    'avature.net','phenompeople.com','eightfold.ai','joinhandshake.com','workforcenow.adp.com','careerplug.com'])
     SHARED.add(d);
   console.log(`shared board domains ignored for domain matching: ${SHARED.size}`);
 
