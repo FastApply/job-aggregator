@@ -138,6 +138,31 @@ async function fetchJobDetail(baseUrl, externalPath) {
 // offices are in the US, was out of reach of a Canadian citizen. Null keeps the stored place.
 const PLACE_COUNT = /^\s*\d+\s+locations?\s*$/i;
 
+// The posting's own id. bulletFields[0] is the requisition number on most tenants, and every
+// stored id has always been built from it -- but it is whatever the tenant chose to show first in
+// the job list. On Shriners it is the shift ("Day Shift (United States of America)" for 264 of
+// 329 postings), on Otis the office address. Used as the id, every posting sharing that text
+// collapsed into one row, each sync overwriting the last: Shriners kept 8 of 329, Otis 574 of
+// 1,374, and 781 boards in prod held ids like "workday_Fixed Term (Fixed Term)" (2026-11-15).
+//
+// So the bullet is the id only when it looks like a requisition number: one token, letters,
+// digits and _.- only, at least one digit, at most 40 characters. Every tenant whose bullet is a
+// real requisition number keeps exactly the ids it has today. Otherwise the id is the suffix of
+// the posting path (".../Physician-Assistant_JR101829" -> JR101829), which Workday makes unique
+// per posting, and the whole path as a last resort.
+const REQ_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$/;
+function isReqId(v) {
+  return typeof v === 'string' && REQ_ID.test(v) && /\d/.test(v);
+}
+
+function jobIdOf(posting) {
+  const bullet = posting?.bulletFields?.[0];
+  if (isReqId(bullet)) return bullet;
+  const m = String(posting?.externalPath || '').match(/_([A-Za-z0-9][A-Za-z0-9-]*)\/?$/);
+  if (m) return m[1];
+  return posting?.externalPath || null;
+}
+
 function placeOf(detail, posting) {
   // The detail's own country field, when the place text names none ("PARIS", "Copenhagen"):
   // without it the posting was in no country search (place-country.js). The requisition's
@@ -352,7 +377,7 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
     for (let j = 0; j < batch.length; j++) {
       const posting = batch[j];
       const detail = details[j]?.jobPostingInfo || null;
-      const jobReqId = posting.bulletFields?.[0] || null;
+      const jobReqId = jobIdOf(posting);
       const description = detail?.jobDescription || null;
       const salary = extractSalary(description);
 
@@ -394,4 +419,4 @@ async function fetchSiteJobs(clientname, wdNum, siteSlug) {
   return { jobs, meta: { companyName, logoUrl, capped } };
 }
 
-module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT, placeOf, workModelOf, PLACE_COUNT };
+module.exports = { fetchJobs, discoverConfig, configFromCareerUrl, discoveryMissOutcome, DISCOVERY_MISS_LIMIT, placeOf, workModelOf, PLACE_COUNT, jobIdOf, isReqId };
