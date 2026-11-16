@@ -29,8 +29,22 @@ const ANYWHERE_PERK = /\b(?:(?:\d+|one|two|three|four|six|eight|twelve)\s+)?(?:m
 const LISTED_AS_MODE =
   /(?:\b(?:remote|hybrid|on-?site|in[\s-]office)\s*:\s*)?\b(?:if|when|where)\s+(?:this|the|a|your)\s+(?:position|role|job|opportunity)\s+is\s+(?:listed|posted|designated|advertised|marked|identified)\s+as\s+(?:remote|hybrid|on-?site|in[\s-]office)\b[^.;!?•]*/gi;
 
+/**
+ * CareerPlug's footer for the employer's "flexible" remote setting, on every such posting:
+ * "Flexible work from home options available." NEOSTEK's Program Manager in Washington, DC carries
+ * it beside "Hybrid – Minimum 50% On-Site Required", Mighty Dog Roofing's roof-inspection sales rep
+ * in Grand Prairie, TX beside nothing else; tagged remote on it, both kinds went to remote-only
+ * users and were spared the city radius (verdict audit, 2026-11-16 08h). A fully remote CareerPlug
+ * posting says so in its own words ("This is a remote position.") and its JSON-LD (TELECOMMUTE).
+ */
+const CAREERPLUG_FLEXIBLE_FOOTER = /\bflexible\s+work\s+from\s+home\s+options?\s+(?:are\s+)?available\b\.?/gi;
+
 function withoutRemoteBoilerplate(text) {
-  return String(text || '').replace(CONDITIONAL_REMOTE, ' ').replace(LISTED_AS_MODE, ' ').replace(ANYWHERE_PERK, ' ');
+  return String(text || '')
+    .replace(CONDITIONAL_REMOTE, ' ')
+    .replace(LISTED_AS_MODE, ' ')
+    .replace(ANYWHERE_PERK, ' ')
+    .replace(CAREERPLUG_FLEXIBLE_FOOTER, ' ');
 }
 
 module.exports = { withoutRemoteBoilerplate };
