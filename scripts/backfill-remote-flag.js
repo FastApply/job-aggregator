@@ -43,6 +43,8 @@ const NO_WORK_MODEL = [
   'greenhouse', 'workday', 'successfactors', 'taleo', 'avature', 'brassring', 'personio',
   'reachmee', 'varbi', 'visma', 'adp', 'adp_workforcenow', 'manatal', 'silkroad', 'jazzhr', 'jobvite',
   'bamboohr', 'ukg',
+  // CareerPlug sends TELECOMMUTE for a fully remote job and nothing else (src/adapters/careerplug.js).
+  'careerplug',
 ];
 
 // The title or location says the job is worked away from an office, so the tag is the employer's
@@ -101,6 +103,8 @@ const DENIES_OR_PARTIAL = new RegExp([
   // An ATS field answered no: "Remote Position: No" (Celestica's SuccessFactors postings).
   '\\bremote(?:\\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity))?\\s*\\??\\s*(?::|\\s[-–—])\\s*no\\b',
   '\\bremote\\s+(?:work\\s+)?(?:may\\s+be\\s+)?(?:possible|considered)\\s+(?:upon|with|on\\s+approval)', '\\bremote\\s+work\\s+as\\s+needed', '\\bpositions\\s+that\\s+are\\s+available\\s+as\\s+remote',
+  // CareerPlug's footer for its "flexible" setting (src/utils/remote-boilerplate.js).
+  '\\bflexible\\s+work\\s+from\\s+home\\s+options?\\s+(?:are\\s+)?available',
 ].join('|'), 'i');
 const REMOTE_WORD_G = new RegExp(REMOTE_WORD.source, 'gi');
 function everyMentionExplained(plain) {

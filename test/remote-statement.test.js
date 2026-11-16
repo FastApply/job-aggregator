@@ -23,6 +23,8 @@ const notRemote = [
   ['Remote Operations Center Specialist', 'GA Atlanta', 'Live sports production, coordination and oversight.'],
   ['Software Engineer', 'Strykow', 'Ability to work with remote teams across regions.'],
   ['Analyst', 'Racine', 'You can work remotely up to 2 days a week.'],
+  ['Program Manager', 'Washington, DC, US', 'Location: Washington, DC (Hybrid – Minimum 50% On-Site Required) Clearance: ... Flexible work from home options available.'],
+  ['Sales Representative', 'Grand Prairie, TX, US', 'Conduct roof and property inspections. Flexible work from home options available.'],
 ];
 const remote = [
   ['Customer Success Manager', 'Arlington, VA', 'Role Location: Fully remote within the continental United States.'],
@@ -77,6 +79,9 @@ test('the backfill clears a row tagged on the word and leaves the rest', () => {
   // No such word: the tag came from the ATS.
   assert.strictEqual(retag(row('Retail Specialist', 'Quincy, IL', '<p>Stock shelves.</p>')), null);
   assert.strictEqual(retag(row('Sales Manager', 'Remote - Texas', '<p>Selling remote monitoring.</p>')), null);
+  // CareerPlug's "flexible" footer is cleared; its fully remote postings keep the tag.
+  assert.deepStrictEqual(retag(row('Sales Representative', 'Grand Prairie, TX, US', '<p>Conduct roof inspections. Flexible work from home options available.</p>')), { workplace: null, is_remote: false, remote_worldwide: false });
+  assert.strictEqual(retag(row('Program Manager', 'Philadelphia-20004 Fully Remote - US, PA', '<p>This is a remote position. Flexible work from home options available.</p>')), null);
 });
 
 test('the backfill keeps a tag the title, location or a stated wording gives', () => {
