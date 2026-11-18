@@ -670,8 +670,15 @@ const jobsRepo = {
             -- A feed row whose type and date were read from its ATS (ats_facts_at) keeps them:
             -- the feed re-sends its own values every sync (tasks/feed-ats-facts.js). Rows the
             -- board crawls itself never carry the mark, so this changes nothing for them.
+            -- And a sync that carries no type keeps the stored one, as location and salary do. A
+            -- Workday detail call that fails (a 429 in a burst, a timeout) sends NULL type and date
+            -- but keeps the description, so the row reached FastApply's matcher with no type and
+            -- no date until the next good sync: 15-21% of Workday rows on 2026-11-16..18 (after
+            -- #99 widened the detail calls), against 0-5% before. A "Full time" role went to a
+            -- candidate who takes contract work only, and a 237-day posting passed the 180-day
+            -- rule (FastApply pref-match 2026-11-18).
             employment_type = CASE WHEN jobs.ats_facts_at IS NOT NULL THEN jobs.employment_type
-                                   ELSE EXCLUDED.employment_type END,
+                                   ELSE COALESCE(EXCLUDED.employment_type, jobs.employment_type) END,
             -- Derived from title, so it must follow the title on re-sync; a repost with a
             -- changed title would otherwise keep the old category forever.
             role_category = EXCLUDED.role_category,
@@ -703,7 +710,8 @@ const jobsRepo = {
                                 AND EXCLUDED.description IS DISTINCT FROM jobs.description
                                THEN EXCLUDED.description ELSE jobs.description END,
             url = EXCLUDED.url,
-            posted_at = CASE WHEN jobs.ats_facts_at IS NOT NULL THEN jobs.posted_at ELSE EXCLUDED.posted_at END,
+            posted_at = CASE WHEN jobs.ats_facts_at IS NOT NULL THEN jobs.posted_at
+                             ELSE COALESCE(EXCLUDED.posted_at, jobs.posted_at) END,
             raw_data = CASE WHEN EXCLUDED.raw_data IS DISTINCT FROM jobs.raw_data
                             THEN EXCLUDED.raw_data ELSE jobs.raw_data END,
             visa_sponsorship = CASE WHEN EXCLUDED.visa_sponsorship != '' THEN EXCLUDED.visa_sponsorship ELSE jobs.visa_sponsorship END,
