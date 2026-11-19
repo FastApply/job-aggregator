@@ -25,6 +25,18 @@ function parseBreezySalary(s) {
 /**
  * Fetch a single job's detail page and extract description + logo.
  */
+/**
+ * Breezy's own work-mode setting. Breezy sets is_remote for "Hybrid (Some remote, some in person)"
+ * too (remote_details.value "hybrid"), so a hybrid posting was stored remote: Precision's "Executive
+ * Assistant & Office Manager (DC Office)", hybrid in Washington, DC, went to a remote-only candidate
+ * in Connecticut (FastApply pref-match, 2026-11-19).
+ */
+function workplaceOf(location) {
+  if (!location) return null;
+  if (location.remote_details?.value === 'hybrid') return 'hybrid';
+  return location.is_remote ? 'remote' : null;
+}
+
 async function fetchJobDetail(url) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -101,7 +113,7 @@ async function fetchJobs(clientname) {
         title: job.name,
         department: job.department || null,
         location: job.location?.name || job.location?.city || null,
-        workplace_type: job.location?.is_remote ? 'remote' : null,
+        workplace_type: workplaceOf(job.location),
         employment_type: job.type?.name || null,
         ...parseBreezySalary(job.salary), // breezy gives salary as free text, e.g. "$90,000 – $120,000 / year"
         description: detail?.description || null,
@@ -123,4 +135,4 @@ async function fetchJobs(clientname) {
   };
 }
 
-module.exports = { fetchJobs };
+module.exports = { fetchJobs, workplaceOf };
