@@ -15,7 +15,7 @@ const { jobStatesHybrid } = require('./hybrid-work');
 // Verdict audit, 2026-11-20 11h: Ramp's "Fertility HRA (up to $10,000 per year)" and Lennar's "up to
 // $30,000 in Adoption Assistance" were stored as $10,000 and $30,000 a year and refused against
 // the candidates' salary floors. Same words as BENEFIT_NAMED in the backend.
-const NOT_PAY = /\b(?:bonus(?:es)?|commissions?|sign(?:ing|[\s-]on)|stipend|allowance|tuition|reimburs\w*|relocation|referral|revenue|budget|funding|raised|valuation|quota|equity|401\(?k\)?|deposit|fees?|hra|hsa|fsa|lsa|fertility|adoption|surrogacy|family[\s-]forming|childcare|wellness|assistance)\b/i;
+const NOT_PAY = /\b(?:bonus(?:es)?|commissions?|sign(?:ing|[\s-]on)|stipend|allowance|tuition|reimburs\w*|relocation|referral|revenue|budget|funding|raised|valuation|quota|equity|401\(?k\)?|deposit|fees?|hra|hsa|fsa|lsa|fertility|adoption|surrogacy|family[\s-]forming|childcare|wellness|assistance|(?:life|disability|ad&d|accident)\s+insurance|insurance\s+coverage)\b/i;
 const IS_PAY = /\b(?:salary|salaries|pay|compensation|wages?|earnings|ote|remuneration|hourly|base)\b/i;
 const STUDENT_DEBT = /\b(?:student\s+(?:debt|loans?)|debt)\b(?:\s+pay\s*down)?/gi;
 const OTHER_MONEY_REACH = 200;
