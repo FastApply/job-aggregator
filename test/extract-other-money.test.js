@@ -55,3 +55,14 @@ test('the backfill rereads only a stored figure that is other money', () => {
   assert.strictEqual(reread({ salary_min: '90000', description: 'Salary: $90,000 - $110,000 plus bonus.' }), null);
   assert.strictEqual(reread({ salary_min: '120000', description: 'Great benefits.' }), null);
 });
+
+test('a named benefit after "up to" is not the salary (verdict audit, 2026-11-20 11h)', () => {
+  for (const text of [
+    '<ul><li>401(k), including employer match</li><li>Fertility HRA (up to $10,000 per year)</li><li>Parental leave: up to 16 weeks at 100% pay</li></ul>',
+    'To further support our Associates, we provide an Education Assistance Program and up to $30,000 in Adoption Assistance, underscoring our commitment.',
+  ]) {
+    assert.strictEqual(extractSalary(text), null, text);
+  }
+  const got = extractSalary('Salary: $70,000 per year. Fertility HRA (up to $10,000 per year).');
+  assert.deepStrictEqual([got?.min, got?.max], ['70000', '70000']);
+});
