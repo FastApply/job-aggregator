@@ -238,4 +238,24 @@ async function fetchJobs(rawSlug) {
   return { jobs, meta: { companyName: meta.companyName, logoUrl: meta.logoUrl, capped } };
 }
 
-module.exports = { fetchJobs, toJob, slugOf, parseListPage, parsePosting, pageDescription, boardMeta, rowLocation, hasNextPage, isListPage, fetchTimeoutMs };
+/**
+ * Full text of one posting, for the description backfill: its posting page through the shared
+ * queue, read as fetchJobs reads it (the JSON-LD text, else the page's own body). A crawl reads
+ * only the first MAX_DETAILS postings of a board, so on a big franchise board (Orangetheory:
+ * about 2,700 postings, 2026-11-20) the rest kept their list row and no text, and FastApply
+ * refused them as "Industry cannot be checked: the posting has no description". Returns the
+ * HTML, or 'SKIP' when the posting is gone (404, 410, or a redirect off it) or has no body. A
+ * passing fault throws, so the row is tried again next cycle.
+ */
+async function fetchDescription(url) {
+  const m = String(url || '').match(/^https:\/\/([a-z0-9-]+)\.careerplug\.com\/jobs\/(\d+)(?:[/?#]|$)/);
+  if (!m || VENDOR_HOSTS.has(m[1])) return 'SKIP';
+  const r = await getPage(`${baseOf(m[1])}/jobs/${m[2]}/apps/new`);
+  if (r.status === 404 || r.status === 410 || (r.status >= 300 && r.status < 400)) return 'SKIP';
+  if (r.status !== 200) throw new Error(`CareerPlug HTTP ${r.status} (retry)`);
+  const p = parsePosting(r.html);
+  const d = (p && p.description ? decodeEntities(p.description).trim() : '') || pageDescription(r.html);
+  return d && text(d).length >= 20 ? d : 'SKIP';
+}
+
+module.exports = { fetchJobs, fetchDescription, toJob, slugOf, parseListPage, parsePosting, pageDescription, boardMeta, rowLocation, hasNextPage, isListPage, fetchTimeoutMs };
