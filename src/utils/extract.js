@@ -1,4 +1,4 @@
-const { withoutRemoteBoilerplate } = require('./remote-boilerplate');
+const { withoutRemoteBoilerplate, NOT_WORKED_FROM_HOME } = require('./remote-boilerplate');
 const { jobStatesHybrid } = require('./hybrid-work');
 
 /**
@@ -330,7 +330,7 @@ const REMOTE_STATEMENT = new RegExp([
 
 function statesRemote(title, description) {
   const text = withoutRemoteBoilerplate(String(description || '').replace(/\s+/g, ' '));
-  if (!text || NOT_REMOTE_EN.test(text) || REMOTE_FIELD_NO.test(text) || OFFICE_DAYS.test(text) || PART_WEEK_REMOTE.test(text)) return false;
+  if (!text || NOT_REMOTE_EN.test(text) || NOT_WORKED_FROM_HOME.test(text) || REMOTE_FIELD_NO.test(text) || OFFICE_DAYS.test(text) || PART_WEEK_REMOTE.test(text)) return false;
   if (REMOTE_STATEMENT.test(text)) return true;
   // "Ajaia is hiring a remote Product Manager": the word against the job's own title.
   const name = String(title || '').trim().toLowerCase();
@@ -409,7 +409,7 @@ function extractWorkplaceTypeFromDescription(title, location, description) {
   const head = `${title || ''} ${location || ''}`;
   if (REMOTE_IN_HEAD.test(head) || LOCATION_IS_GLOBAL.test(location || '')) return 'remote';
   const text = String(description || '');
-  if (NOT_REMOTE_EN.test(text) || REMOTE_FIELD_NO.test(text)) return null;
+  if (NOT_REMOTE_EN.test(text) || NOT_WORKED_FROM_HOME.test(text) || REMOTE_FIELD_NO.test(text)) return null;
   if (FULL_REMOTE_INTL.test(text) || STRONG_REMOTE_EN.test(text)) return 'remote';
   return null;
 }
