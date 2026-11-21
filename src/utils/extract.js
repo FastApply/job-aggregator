@@ -257,7 +257,24 @@ const OFFICE_DAY = '(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:day)?\\.?';
 const OFFICE_DAYS = new RegExp(
   `\\b(?:${OFFICE_DAY}(?:\\s*(?:,\\s*and|,|/|&|and)\\s*${OFFICE_DAY}){1,3}` +
   `|(?!mon(?:day)?\\.?\\s*(?:-|–|—|to|through|thru)\\s*fri)${OFFICE_DAY}\\s*(?:-|–|—|to|through|thru)\\s*${OFFICE_DAY}` +
-  `|m\\s*\\\\?[-–—]\\s*th)\\s*[:(]?\\s*(?:in[\\s-]?(?:the\\s+|our\\s+)?office|on[\\s-]?site|in[\\s-]?person)\\b`, 'i');
+  `|m\\s*\\\\?[-–—]\\s*th)\\s*[:(]?\\s*(?:(?:are|is)\\s+)?(?:in[\\s-]?(?:the\\s+|our\\s+)?office|on[\\s-]?site|in[\\s-]?person)\\b`, 'i');
+
+// Home or remote work on named days of the week: the rest of the week is in the office, so the
+// job is hybrid, never remote. Each of these was stored remote on the words "work from home" or
+// "work remotely", so it sat in remote-only searches and out of hybrid and on-site ones (supply
+// loop 2026-11-21 18h: 14 of 5,995 sampled US remote rows): CoStar's "in office Monday through
+// Thursday and work from home on Friday", "onsite in the Brooklyn office Monday - Thursday and
+// work remotely on Fridays", "In-office Monday through Thursday and work from home on Fridays",
+// "in the office Monday through Wednesday and may work remotely the rest of the week", "Work from
+// home Fridays". Not a half day ("½ day work from home Fridays" is a perk of an office job, read
+// as nothing here), and not "Monday through Friday", the whole week.
+const WEEK_DAYS = '(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:days?)?';
+const PART_WEEK_REMOTE = new RegExp([
+  `(?<!(?:½|half|1/2)[\\s-]?days?\\s)\\b(?:work(?:ing|s)?\\s+(?:from\\s+home|remotely|remote)|wfh|remote(?:ly)?)\\s+(?:on\\s+)?(?:the\\s+)?${WEEK_DAYS}\\b`,
+  `\\bwork(?:ing)?\\s+remotely\\s+(?:for\\s+)?the\\s+rest\\s+of\\s+the\\s+week\\b`,
+  `\\bwith\\s+${WEEK_DAYS}\\s+(?:remote|wfh|from\\s+home)\\b`,
+  `\\b(?:in[\\s-]?(?:the\\s+|our\\s+)?office|on[\\s-]?site|in[\\s-]?person)\\s+(?:on\\s+)?(?!mon(?:day)?\\.?\\s*(?:-|–|—|to|through|thru)\\s*fri)${OFFICE_DAY}\\s*(?:-|–|—|to|through|thru)\\s*${OFFICE_DAY}(?=[^.]{0,80}\\b(?:remote(?:ly)?|from\\s+home|wfh)\\b)`,
+].join('|'), 'i');
 
 // Remote as the way THIS job is worked, read from a description. The bare word is no evidence:
 // rows the ATS gives no work model for are tagged here, and a remote-only candidate's search is
@@ -306,7 +323,7 @@ const REMOTE_STATEMENT = new RegExp([
 
 function statesRemote(title, description) {
   const text = withoutRemoteBoilerplate(String(description || '').replace(/\s+/g, ' '));
-  if (!text || NOT_REMOTE_EN.test(text) || REMOTE_FIELD_NO.test(text) || OFFICE_DAYS.test(text)) return false;
+  if (!text || NOT_REMOTE_EN.test(text) || REMOTE_FIELD_NO.test(text) || OFFICE_DAYS.test(text) || PART_WEEK_REMOTE.test(text)) return false;
   if (REMOTE_STATEMENT.test(text)) return true;
   // "Ajaia is hiring a remote Product Manager": the word against the job's own title.
   const name = String(title || '').trim().toLowerCase();
@@ -343,7 +360,7 @@ function extractWorkplaceType(title, location, description) {
     if (hybrid) return 'hybrid';
     return 'remote';
   }
-  if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || hybrid || OFFICE_DAYS.test(fields)) return 'hybrid';
+  if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || hybrid || OFFICE_DAYS.test(fields) || PART_WEEK_REMOTE.test(fields)) return 'hybrid';
   if (HOME_WORK_INTL.test(fields)) return 'hybrid';
   if (/\bon-site\b|\bonsite\b|\bin-office\b|\bin office\b|\bon site\b/.test(fields)) return 'onsite';
 
