@@ -299,10 +299,14 @@ const REMOTE_STATEMENT = new RegExp([
   '#li-remote\\b', '\\bwork\\s+from\\s+anywhere\\b',
   // WFH on its own, not one day of the week ("Wednesday WFH option", "F - WFH").
   `(?<!(?:${WEEK_DAY})\\s*(?:[-–—:]\\s*)?)\\bwfh\\b(?!\\s+(?:option|day|days|flex\\w*|policy|allowance|stipend))`,
+  // Nor a condition: "You can work from home, if the work activity allows" (OMV), "our flexible work
+  // policy so you can work from home whenever it suits" (Emirates NBD, on every posting), "Able to
+  // work remotely if required": a flexibility perk of an office job (supply loop 2026-11-21 18h:
+  // 14 of 15,908 sampled remote rows, Dubai bank roles out of Dubai on-site searches).
   // "work remotely", "can work fully remote", "working from home". Not "work with remote teams",
   // a stipend for it, or a few days of it ("work remotely up to 2 days a week").
   // Nor a perk: "the option to work from home" (Frequentis, an office job in Vienna, 2026-10-31).
-  '(?<!\\b(?:option|ability|possibility|opportunity|chance|flexibility)\\s+to\\s)\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri)(?:days?)?\\b)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))',
+  '(?<!\\b(?:option|ability|possibility|opportunity|chance|flexibility)\\s+to\\s)\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri)(?:days?)?\\b)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))(?!\\s*,?\\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\\s+to|as\\s+long\\s+as|provided)\\b)',
   // "Location: Remote", "Location : India, Remote", "Work Arrangement: Fully remote", "Position Type: Full-Time, Remote".
   '\\b(?:location|workplace|arrangement|set-?up|working\\s+conditions|work\\s+(?:mode|model|style|type|schedule)|position\\s+type|job\\s+type)\\s*(?:\\([^)]*\\))?\\s*[:;\\-–—]?\\s*(?:[\\w .,/&\\-]{0,30}[,:/|\\-–—]\\s*)?remote\\b(?!\\s+(?:sites?|locations?|areas?))',
   // Workday's field: "Remote Type - Remote"; "Remote Type: On-site" reads as on-site below.

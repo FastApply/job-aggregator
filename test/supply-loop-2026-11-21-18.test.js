@@ -35,3 +35,19 @@ test('the whole week, a half day, and a fully remote job are not part-week', () 
   // Office days with no home work after them stay as they were (a 4x10 schedule is on-site).
   assert.notStrictEqual(extractWorkplaceType('Technician', 'Dayton, OH', 'This is an in office Monday through Thursday, 10 hour shift role.'), 'hybrid');
 });
+
+// Work from home on a condition is a flexibility perk of an office job, never a remote work model.
+// Emirates NBD says it on every posting, so its Dubai bank roles sat out of Dubai on-site searches.
+test('work from home on a condition is not remote', () => {
+  const conditional = [
+    ['Manager - Project Finance', 'Dubai', 'benefits and perks too, like our flexible work policy so you can work from home whenever it suits'],
+    ['Specialist Customer Service Export', 'Bucharest, RO', 'You can work from home, if the work activity allows.'],
+    ['Customer Service Representative', 'Paris', 'Able to work remotely if required – access to reliable internet connection required'],
+    ['Senior Accountant - Financial Planning', 'Latham, NY', 'This position is primarily onsite at our Latham, NY office. Eligible to work from home when schedule allows.'],
+  ];
+  for (const [t, l, d] of conditional) {
+    assert.notStrictEqual(extractWorkplaceType(t, l, d), 'remote', t);
+  }
+  // Remote without a condition still reads remote.
+  assert.strictEqual(extractWorkplaceType('Support Engineer', 'United States', 'You will work remotely from anywhere in the US.'), 'remote');
+});
