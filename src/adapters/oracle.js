@@ -9,8 +9,21 @@
  */
 const logger = require('../logger');
 
-const PAGE_SIZE = 25;
+// 200 is the most the list API returns per request (limit=500 still answers 200), and it stops at
+// offset 10,000 whatever the total. At 25 a 13k-job site took 400 requests just to list.
+const PAGE_SIZE = 200;
+const MAX_OFFSET = 10000;
 const DETAIL_BATCH_SIZE = 3;
+// Detail calls per sync when the caller says which postings already hold text (opts.describedIds).
+// Newest first, so a big site fills in over a few syncs instead of timing out on the first one.
+const DETAIL_MAX = parseInt(process.env.ORACLE_DETAIL_MAX || '400', 10);
+// crawl-companies-local.js gives an adapter 60s unless it asks for more. Every Oracle site with
+// more than a few hundred postings ran past that (one detail call per posting, 3 at a time), the
+// timeout was filed as transient, and the board was retried every 10 minutes forever without
+// writing a row or an error: emqk.ca3.CX_1001 showed 247 live of 2,216, last seen 2026-11-10.
+const fetchTimeoutMs = 30 * 60 * 1000;
+// Ask the crawler for the external_ids that already have a description (see opts.describedIds).
+const wantsStoredState = true;
 const COMMON_SITE_NUMBERS = ['CX', 'CX_1', 'CX_1001', 'CX_45001', 'CX_1003'];
 
 /**
@@ -160,7 +173,13 @@ async function fetchJobDetail(baseUrl, siteNumber, jobId) {
   }
 }
 
-async function fetchJobs(clientname) {
+/**
+ * opts.describedIds: external_ids the board already holds text for (a Set or array). When given,
+ *   only postings missing from it get a detail call, newest first and at most DETAIL_MAX; the
+ *   rest are sent with description NULL, which the upsert treats as "keep what is stored". Without
+ *   it every posting gets a detail call, as before (the BullMQ sync worker).
+ */
+async function fetchJobs(clientname, opts = {}) {
   const parsed = parseSlug(clientname);
   if (!parsed) throw new Error(`Oracle: invalid slug format "${clientname}", expected "tenant.region", "tenant.region.siteNumber", or "full:subdomain/siteNumber"`);
 
@@ -178,7 +197,7 @@ async function fetchJobs(clientname) {
   let offset = 0;
   let hasMore = true;
 
-  while (hasMore && offset < 10000) {
+  while (hasMore && offset < MAX_OFFSET) {
     const url = `${baseUrl}/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList.secondaryLocations&finder=findReqs;siteNumber=${siteNumber},limit=${PAGE_SIZE},offset=${offset},sortBy=POSTING_DATES_DESC`;
 
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -195,15 +214,25 @@ async function fetchJobs(clientname) {
 
   // Step 2: Fetch details in batches for full descriptions
   const jobs = [];
+  const described = opts.describedIds
+    ? (opts.describedIds instanceof Set ? opts.describedIds : new Set(opts.describedIds))
+    : null;
+  // Which postings get a detail call. The list is newest first, so the cap keeps the newest.
+  const wanted = new Set();
+  for (const p of postings) {
+    if (described && wanted.size >= DETAIL_MAX) break;
+    if (!described || !described.has(`oracle_${p.Id}`)) wanted.add(p.Id);
+  }
 
   for (let i = 0; i < postings.length; i += DETAIL_BATCH_SIZE) {
     const batch = postings.slice(i, i + DETAIL_BATCH_SIZE);
+    const toRead = batch.filter(job => wanted.has(job.Id));
     const settled = await Promise.allSettled(
-      batch.map(job => fetchJobDetail(baseUrl, siteNumber, job.Id))
+      batch.map(job => (wanted.has(job.Id) ? fetchJobDetail(baseUrl, siteNumber, job.Id) : Promise.resolve(null)))
     );
     const details = settled.map(r => r.status === 'fulfilled' ? r.value : null);
 
-    if (i + DETAIL_BATCH_SIZE < postings.length) {
+    if (toRead.length && i + DETAIL_BATCH_SIZE < postings.length) {
       await new Promise(r => setTimeout(r, 300));
     }
 
@@ -251,7 +280,9 @@ async function fetchJobs(clientname) {
         salary_max: salary.max || null,
         salary_currency: salary.currency || null,
         salary_interval: salary.min ? 'yearly' : null,
-        description: detail?.description || job.ShortDescriptionStr || null,
+        // A posting skipped for detail sends NULL, not the list's short text: NULL keeps the full
+        // description stored, and a short one would overwrite it and then count as described.
+        description: detail?.description || (wanted.has(job.Id) ? job.ShortDescriptionStr || null : null),
         url: buildCareersUrl(parsed, siteNumber, job.Id),
         posted_at: job.PostedDate || null,
         raw_data: job,
@@ -264,4 +295,4 @@ async function fetchJobs(clientname) {
   return { jobs, meta: { companyName: null } };
 }
 
-module.exports = { fetchJobs };
+module.exports = { fetchJobs, fetchTimeoutMs, wantsStoredState, PAGE_SIZE, DETAIL_MAX };
