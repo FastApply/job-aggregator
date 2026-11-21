@@ -75,7 +75,7 @@ case " ${PROMOTE_SOURCES:-crawled} " in
             ELSE NULL END AS slug
         FROM jobs j
         CROSS JOIN LATERAL (SELECT regexp_replace(split_part(split_part(j.url,'?',1),'#',1),'^https?://','') AS bare) b
-        WHERE (j.raw_data::jsonb)->>'source'='simplify'
+        WHERE (j.raw_data::jsonb)->>'source' IN ('simplify', 'aggregator:simplify')
           AND j.url NOT LIKE 'https://simplify.jobs/%'
           AND j.removed_at IS NULL
       ) t WHERE slug IS NOT NULL AND slug <> ''

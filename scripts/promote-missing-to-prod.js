@@ -79,7 +79,7 @@ const CHECKPOINT = process.env.CHECKPOINT || '/tmp/promote-missing.checkpoint';
 const OUTBOX_MAX = parseInt(process.env.OUTBOX_MAX || '40000', 10);
 // Connection-level only: the query never reached Postgres. Mirrors RETRYABLE_DB_ERRORS in
 // src/db/connection.js, minus the statement/read timeouts that mean the server did answer.
-const TRANSIENT_NET = /ENETUNREACH|EADDRNOTAVAIL|EHOSTUNREACH|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|EPIPE|Connection terminated|socket hang up/i;
+const TRANSIENT_NET = /ENETUNREACH|EADDRNOTAVAIL|EHOSTUNREACH|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|EPIPE|Connection terminated|socket hang up|Query read timeout|ETIMEDOUT/i;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const n = (v) => Number(v).toLocaleString();
@@ -117,7 +117,10 @@ function urlKey(u) {
   if (!u) return null;
   try {
     const x = new URL(u);
-    return (x.origin + x.pathname).replace(/\/+$/, '').toLowerCase();
+    // Workday serves one posting at /<site>/job/... and /en-US/<site>/job/...; Sprout links carry
+    // the locale, the crawler's do not, so without this the same job ships twice.
+    const path = /myworkdayjobs\.com$/i.test(x.hostname) ? x.pathname.replace(/^\/[a-z]{2}-[a-z]{2}\//i, '/') : x.pathname;
+    return (x.origin + path).replace(/\/+$/, '').toLowerCase();
   } catch { return String(u).split('?')[0].split('#')[0].replace(/\/+$/, '').toLowerCase(); }
 }
 
@@ -181,11 +184,24 @@ async function pinHostToIp(url) {
   // Heroku drops a long-lived connection — which killed an armed run mid-insert. A Pool replaces
   // a dead connection on the next query, and the listener below stops an idle-client drop from
   // taking the process down. keepAlive holds the socket open through slow per-employer batches.
-  const local = new Pool({ connectionString: LOCAL_URL, max: Math.max(4, CONCURRENCY + 2), keepAlive: true,
-    idleTimeoutMillis: 0, statement_timeout: 300000 });
+  // query_timeout is the one that matters on this machine, and it is CLIENT side.
+  //
+  // statement_timeout is enforced by Postgres, so it only fires on a query the server actually
+  // received. When the laptop's route drops mid-query the packets go nowhere: the server never
+  // sees the statement, the socket never errors, and the run hangs forever holding a connection
+  // that will never answer. Measured 2026-09-19: the promoter and the description strip both sat
+  // like that for 90 minutes — process alive, zero queries on prod, nothing blocked, no error in
+  // any log. A crash is recoverable; this is invisible.
+  //
+  // query_timeout makes node-postgres give up on its own and throw, which TRANSIENT_NET matches,
+  // so the existing per-employer retry rides it out. keepAliveInitialDelayMillis starts TCP
+  // keepalives early enough that a black-holed connection is also detected at the socket layer.
+  const POOL_TIMEOUTS = { keepAlive: true, keepAliveInitialDelayMillis: 10000, idleTimeoutMillis: 0 };
+  const local = new Pool({ connectionString: LOCAL_URL, max: Math.max(4, CONCURRENCY + 2),
+    ...POOL_TIMEOUTS, statement_timeout: 300000, query_timeout: 360000 });
   const PROD_PINNED = await pinHostToIp(PROD_URL);
   const prod = new Pool({ connectionString: PROD_PINNED, ssl: { rejectUnauthorized: false }, max: Math.max(4, CONCURRENCY + 2),
-    keepAlive: true, idleTimeoutMillis: 0, statement_timeout: 180000,
+    ...POOL_TIMEOUTS, statement_timeout: 180000, query_timeout: 240000,
     connectionTimeoutMillis: 20000 });
   local.on('error', (e) => console.log(`\n  [local pool] ${e.message} (recovering)`));
   prod.on('error', (e) => console.log(`\n  [prod pool] ${e.message} (recovering)`));
@@ -247,7 +263,52 @@ async function pinHostToIp(url) {
   // shows 9,962 job rows for 4,981 distinct URLs. Iterating company rows would process the same
   // employer twice and double-count everything it offers. Grouping collapses them, and
   // local_ids carries every row so no job is missed.
-  const cands = SOURCE === 'simplify'
+  // ── SOURCE=plan ────────────────────────────────────────────────────────────────────────
+  // An explicit, pre-resolved list: PLAN_TABLE (job_id, ats, slug, company_name, career_url,
+  // supported). Built by hand for a one-off push of jobs the recurring cycle deliberately skips
+  // (the unmapped simplify corpus, crawled rows older than MAX_AGE_H), so MAX_AGE_H does not apply
+  // here — the plan IS the selection. Only supported=true rows are read, which keeps the
+  // src/utils/supported-ats.js gate: nothing lands on a platform users cannot apply through.
+  const PLAN_SQL = `
+    SELECT min(p.job_id) AS local_id, array_agg(p.job_id) AS job_ids,
+           p.ats, min(p.slug) AS ats_slug, min(p.company_name) AS company_name,
+           min(p.career_url) AS career_url, count(*) AS job_count
+      FROM ${String(process.env.PLAN_TABLE || 'scratch_promote_plan').replace(/[^a-z0-9_.]/gi, '')} p
+     WHERE p.supported
+     GROUP BY p.ats, lower(p.slug)
+     ORDER BY count(*) DESC
+     ${LIMIT_COMPANIES ? `LIMIT ${LIMIT_COMPANIES}` : ''}`;
+
+  // ── SOURCE=boards ──────────────────────────────────────────────────────────────────────
+  // Job-less boards the aggregator mapper created (origin aggregator_pull) on a platform the
+  // worker crawls. Sprout and aiapply are employer-only on such boards: the mapper creates the
+  // company and leaves the jobs to the crawler. But the 'crawled' selection JOINs jobs, so a
+  // company with no jobs in staging was never promoted, and prod's worker never heard of it.
+  // This pushes just the company; prod's worker then crawls the board (last_synced_at is NULL,
+  // so it is due at once). No jobs are sent. Platforms: the supported-ats gate.
+  const BOARDS_ATS = (process.env.BOARDS_ATS ? process.env.BOARDS_ATS.split(',') : [...require('../src/utils/supported-ats').SUPPORTED_ATS])
+    .map((s) => s.trim()).filter((s) => s && s !== 'direct' && s !== 'simplify');
+  const BOARDS_SQL = `
+    SELECT min(c.id) AS local_id, array_agg(c.id) AS local_ids, min(c.company_name) AS company_name,
+           c.ats, min(c.ats_slug) AS ats_slug, min(c.career_url) AS career_url, min(c.domain) AS domain,
+           0 AS job_count
+      FROM companies c
+     WHERE c.origin = 'aggregator_pull' AND c.ats = ANY($1::text[]) AND c.ats_slug IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.company_id = c.id AND j.removed_at IS NULL)
+       ${process.env.BOARDS_SKIP_TABLE
+         // A local snapshot of prod's (ats, lower(slug)) keys. Boards prod already has would only
+         // cost a per-company prod round trip each to learn there is nothing to do.
+         ? `AND NOT EXISTS (SELECT 1 FROM ${String(process.env.BOARDS_SKIP_TABLE).replace(/[^a-z0-9_.]/gi, '')} p
+                             WHERE p.ats = c.ats AND p.slug = lower(c.ats_slug))` : ''}
+     GROUP BY c.ats, lower(c.ats_slug)
+     ORDER BY c.ats, lower(c.ats_slug)
+     ${LIMIT_COMPANIES ? `LIMIT ${LIMIT_COMPANIES}` : ''}`;
+
+  const cands = SOURCE === 'plan'
+    ? (await local.query(PLAN_SQL)).rows
+    : SOURCE === 'boards'
+    ? (await local.query(BOARDS_SQL, [BOARDS_ATS])).rows
+    : SOURCE === 'simplify'
     ? (await local.query(SIMPLIFY_SQL, [MAX_AGE_H])).rows
     : (await local.query(`
     SELECT min(c.id) AS local_id,
@@ -335,7 +396,9 @@ async function pinHostToIp(url) {
              RETURNING id`,
             [c.company_name || c.ats_slug, c.ats, c.ats_slug,
              c.career_url || canonicalUrl(c.ats, c.ats_slug),
-             c.domain || (() => { try { return new URL(canonicalUrl(c.ats, c.ats_slug)).host; } catch { return 'unknown'; } })()]);
+             // The career URL's host when there is one: canonicalUrl() only knows 13 ATS and
+             // answers example.invalid for the rest (icims, oracle, taleo, ...).
+             c.domain || (() => { try { return new URL(c.career_url || canonicalUrl(c.ats, c.ats_slug)).host; } catch { return 'unknown'; } })()]);
           prodCompanyId = ins.rows[0].id;
           prodCompanyIndex.set(`${c.ats}|${String(c.ats_slug).toLowerCase()}`, prodCompanyId);
         }
@@ -344,7 +407,9 @@ async function pinHostToIp(url) {
       } else {
         stats.companiesMatched++;
       }
-      if (!prodCompanyId) { await sleep(SLEEP_MS); continue; } // shadow, company would be new
+      // Shadow, company would be new. `break`, not `continue`: this sits inside the retry loop, where
+      // `continue` re-ran the same employer forever and a shadow run never finished.
+      if (!prodCompanyId) break;
 
       // 2. What does prod already hold for it? Indexed by company_id, so this is cheap.
       const { rows: existing } = await prod.query(
@@ -356,7 +421,11 @@ async function pinHostToIp(url) {
       // hide postings the other one lacks. DISTINCT ON the URL path collapses the copies the
       // duplication created (svetness: 9,962 rows -> 4,981 real postings).
       const { rows: mine } = await local.query(
-        SOURCE === 'simplify'
+        SOURCE === 'plan'
+        ? `SELECT DISTINCT ON (url) ${COLS.filter((x) => x !== 'company_id').join(', ')}
+             FROM jobs WHERE id = ANY($1::bigint[]) AND removed_at IS NULL
+            ORDER BY url, last_seen_at DESC NULLS LAST`
+        : SOURCE === 'simplify'
         ? `SELECT DISTINCT ON (regexp_replace(split_part(split_part(url,'?',1),'#',1),'/+$',''))
                   ${COLS.filter((x) => x !== 'company_id').join(', ')}
              FROM jobs WHERE id = ANY($1::bigint[])
@@ -367,7 +436,7 @@ async function pinHostToIp(url) {
             AND url NOT LIKE 'https://simplify.jobs/%'
             AND ($2 = 0 OR last_seen_at > now() - ($2 || ' hours')::interval)
           ORDER BY regexp_replace(split_part(split_part(url,'?',1),'#',1),'/+$',''), last_seen_at DESC NULLS LAST`,
-        SOURCE === 'simplify' ? [c.job_ids] : [c.local_ids, MAX_AGE_H]);
+        SOURCE === 'simplify' || SOURCE === 'plan' ? [c.job_ids] : [c.local_ids, MAX_AGE_H]);
       stats.jobsExamined += mine.length;
 
       const missing = [];
@@ -402,10 +471,16 @@ async function pinHostToIp(url) {
       done.add(c.local_id);
       break;
     } catch (e) {
-      if (TRANSIENT_NET.test(e.message || '') && attempt < 3) {
+      if (TRANSIENT_NET.test(e.message || '') && attempt < 8) {
         attempt += 1;
         stats.retries++;
-        await sleep(5000 * attempt);   // 5s, 10s, 15s — long enough to ride out a short blip
+        // 5s, 10s, 20s ... capped at 2 minutes: about 8 minutes in total before an employer is
+        // given up on. The old 5/10/15s schedule (30s total) was tuned for a blip and lost whole
+        // cycles to an OUTAGE: this machine's route drops for minutes at a time, every employer
+        // tried during the drop failed, and the breaker tripped at 500 -- three consecutive cron
+        // cycles on 2026-09-21/22 landed 885, 0 and 1,528 jobs against ~28k/day produced.
+        // Waiting out the drop costs a few minutes; aborting costs the six-hour slot.
+        await sleep(Math.min(5000 * 2 ** (attempt - 1), 120000));
         continue;
       }
       stats.errors++;
