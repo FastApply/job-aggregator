@@ -51,3 +51,13 @@ test('work from home on a condition is not remote', () => {
   // Remote without a condition still reads remote.
   assert.strictEqual(extractWorkplaceType('Support Engineer', 'United States', 'You will work remotely from anywhere in the US.'), 'remote');
 });
+
+test('the retag script rewrites only part-week and conditional rows the reader no longer calls remote', () => {
+  const { retagPartWeek } = require('../scripts/retag-part-week-remote');
+  const row = (title, location, description) => ({ title, location, description });
+  assert.deepStrictEqual(retagPartWeek(row('Staff Accountant', 'Chicago, IL', '<p>In-office Monday through Thursday and work from home on Fridays</p>')), { workplace: 'hybrid', is_remote: false, remote_worldwide: false });
+  assert.deepStrictEqual(retagPartWeek(row('Manager - Project Finance', 'Dubai', '<p>our flexible work policy so you can work from home whenever it suits</p>')), { workplace: null, is_remote: false, remote_worldwide: false });
+  // A remote job, and one without either wording, are left as they are.
+  assert.strictEqual(retagPartWeek(row('Support Engineer', 'Remote - US', '<p>Fully remote. Work from home whenever it suits you.</p>')), null);
+  assert.strictEqual(retagPartWeek(row('Analyst', 'Austin, TX', '<p>This is a fully remote role.</p>')), null);
+});
