@@ -1,6 +1,45 @@
 const { withCountry } = require('../utils/place-country');
 
 /**
+ * One place Ashby lists, with the country its own address field names ("Berlin Office"): without
+ * it the posting was in no country search (place-country.js). A bare town also takes its region
+ * from the address ("Portland" + Oregon), so a town several states share is not left to a guess.
+ */
+function placeOf(location, address) {
+  const text = typeof location === 'string' ? location.trim() : '';
+  if (!text) return null;
+  const pa = (address && address.postalAddress) || {};
+  const town = String(pa.addressLocality || '').trim();
+  const region = String(pa.addressRegion || '').trim();
+  const named = town && region && !text.includes(',') && text.toLowerCase() === town.toLowerCase() &&
+    region.toLowerCase() !== town.toLowerCase() ? `${text}, ${region}` : text;
+  return withCountry(named, { name: pa.addressCountry }) || named;
+}
+
+/**
+ * Every place the employer lists for the posting: the primary one, then Ashby's
+ * `secondaryLocations`, joined with "; " as the oracle and rippling adapters do.
+ *
+ * WHY. Only the primary was stored. 7,723 of 44,255 postings on 1,292 sampled Ashby boards list
+ * more places (17.5%; 2,993 of them in another country), and a search for any of those places
+ * never found them: Scribd's remote "Senior Software Engineer, Core Infrastructure" lists New York
+ * City among 21 places but was stored as "San Francisco, United States", and FastApply measured it
+ * from San Francisco and refused it, 2,566 miles from a candidate in New York (FastApply supply
+ * loop 2026-11-21 12h: on those boards, the place filters of 59 starved searches match 6,747
+ * on-title postings instead of 6,218). The primary keeps its old text, so a posting with no other
+ * place is stored exactly as before.
+ */
+function locationOf(job) {
+  const primary = withCountry(job.location, { name: job.address?.postalAddress?.addressCountry });
+  const more = (Array.isArray(job.secondaryLocations) ? job.secondaryLocations : [])
+    .map((l) => placeOf(l && l.location, l && l.address))
+    .filter(Boolean);
+  if (more.length === 0) return primary || 'Remote';
+  const all = [...new Set([primary, ...more].map((p) => (typeof p === 'string' ? p.trim() : '')).filter(Boolean))];
+  return all.join('; ') || 'Remote';
+}
+
+/**
  * Some stored slugs are already percent-encoded ("Superhuman%20Platform%20Inc", 203 failed
  * boards on 2026-11-09). encodeURIComponent on those sends %2520, which Ashby answers 404, so the
  * board was failed on every crawl. Decode first, then encode exactly once.
@@ -21,9 +60,7 @@ async function fetchJobs(clientname) {
       external_id: `ashby_${job.id}`,
       title: job.title,
       department: job.department || job.team || null,
-      // Ashby's own address field names the country a bare place leaves out ("Berlin Office"):
-      // without it the posting was in no country search (place-country.js).
-      location: withCountry(job.location, { name: job.address?.postalAddress?.addressCountry }) || 'Remote',
+      location: locationOf(job),
       workplace_type: job.workplaceType || null,
       employment_type: job.employmentType || null,
       salary_min: comp?.compensationTierSummary?.[0]?.min || null,
@@ -75,4 +112,4 @@ async function fetchCompanyMeta(clientname) {
   return null;
 }
 
-module.exports = { fetchJobs, fetchCompanyMeta, _boardPath: boardPath };
+module.exports = { fetchJobs, fetchCompanyMeta, locationOf, _boardPath: boardPath };
