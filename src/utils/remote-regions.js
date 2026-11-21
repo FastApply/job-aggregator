@@ -19,6 +19,11 @@ const RULES = [
   [/\bdach\b/i, ['de', 'at', 'ch']],
   [/\bbenelux\b/i, ['be', 'nl', 'lu']],
   [/\bbaltics?\b/i, ['ee', 'lv', 'lt']],
+  // The Americas' regions (location-regions.js has the same lists for the query side). Read as the
+  // United States before 2026-11-21 (location-countries.js AMERICAS_REGION).
+  [/\b(latin\s+america|latam)\b/i, ['mx', 'br', 'ar', 'cl', 'co', 'pe', 'uy', 'cr', 'pa', 'gt', 'ec', 'do']],
+  [/\bsouth\s+america\b/i, ['br', 'ar', 'cl', 'co', 'pe', 'uy', 'py', 'bo', 'ec', 've']],
+  [/\bcentral\s+america\b/i, ['mx', 'gt', 'bz', 'sv', 'hn', 'ni', 'cr', 'pa']],
 ];
 
 /** Region-implied country codes for a remote job's location, or [] when it names no region. */
