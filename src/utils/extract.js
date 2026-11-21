@@ -275,6 +275,9 @@ const PART_WEEK_REMOTE = new RegExp([
   `\\bwith\\s+${WEEK_DAYS}\\s+(?:remote|wfh|from\\s+home)\\b`,
   `\\b(?:in[\\s-]?(?:the\\s+|our\\s+)?office|on[\\s-]?site|in[\\s-]?person)\\s+(?:on\\s+)?(?!mon(?:day)?\\.?\\s*(?:-|–|—|to|through|thru)\\s*fri)${OFFICE_DAY}\\s*(?:-|–|—|to|through|thru)\\s*${OFFICE_DAY}(?=[^.]{0,80}\\b(?:remote(?:ly)?|from\\s+home|wfh)\\b)`,
 ].join('|'), 'i');
+// Home or remote work on a condition ("whenever it suits", "if the work activity allows"): read by
+// the remote statement below as no work model. Exported for scripts/retag-part-week-remote.js.
+const CONDITIONAL_HOME_WORK = /\bwork(?:ing|s)?\s+(?:from\s+home|remotely|remote)\s*,?\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\s+to|as\s+long\s+as|provided)\b/i;
 
 // Remote as the way THIS job is worked, read from a description. The bare word is no evidence:
 // rows the ATS gives no work model for are tagged here, and a remote-only candidate's search is
@@ -474,4 +477,4 @@ function normalizeWorkplaceType(raw) {
   return null;
 }
 
-module.exports = { REMOTE_FIELD_NO, isOtherMoney, extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES, normalizeWorkplaceType, WORKPLACE_TYPES };
+module.exports = { PART_WEEK_REMOTE, CONDITIONAL_HOME_WORK, REMOTE_FIELD_NO, isOtherMoney, extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES, normalizeWorkplaceType, WORKPLACE_TYPES };
