@@ -315,9 +315,16 @@ function countriesFromLocation(text) {
   return [...new Set([...heads, ...(/[a-z0-9]/i.test(rest) ? readCountries(rest) : [])])];
 }
 
+// "Latin America", "South America" and "Central America" are regions, not the United States: the
+// "america" alias read them as us. A remote "Latin America" job sat in location=United States
+// searches and never in Mexico or Brazil ones (supply loop 2026-11-21: "Latin America - Remote",
+// "South America (Remote)" among 1,000 remote US software rows; remote-regions.js gives them their
+// countries).
+const AMERICAS_REGION = /\b(?:latin|south|central)\s+america\b/g;
+
 function readCountries(text) {
   // Dots go first so "Remote - U.S." reads as "us" in both scans below.
-  const s = norm(text).replace(/\./g, '');
+  const s = norm(text).replace(/\./g, '').replace(AMERICAS_REGION, ' ').trim();
   if (!s) return [];
 
   const found = new Set();
