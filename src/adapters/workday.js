@@ -181,11 +181,22 @@ function placeOf(detail, posting) {
 // It was dropped, so every Workday row was tagged from its text alone (extract.js), and an
 // on-site posting whose text mentioned remote work sat in remote-only searches. Null when absent
 // or unrecognised ("Flexible"), which keeps the text reading and the stored tag.
+//
+// A remote type that says no is on-site, and part remote is hybrid. "Not Remote" (Brambles'
+// Operations Supervisor in Wilmington, MA), "Remote work is not available" and "Partially Remote"
+// were all stored remote, because the word "remote" is in them: they sat in remote-only searches
+// and were refused there for the office they name (supply loop 2026-11-20: 8 of 27 sampled
+// remote-stored Workday rows that carry a remoteType).
+const REMOTE_TYPE_NO =
+  /\b(?:not|non|no)\s?remote\b|\bremote\b.*\b(?:not|never)\s+(?:available|allowed|offered|permitted|possible|eligible|an\s+option)\b/;
+const REMOTE_TYPE_PART = /\b(?:partial(?:ly)?|partly|part|semi)\s?remote\b|\bremote\s+partial(?:ly)?\b/;
 function workModelOf(detail) {
   const t = String(detail?.remoteType || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
+  if (REMOTE_TYPE_NO.test(t)) return 'onsite';
   if (/\bhybrid\b/.test(t)) return 'hybrid'; // before remote: "Remote/Hybrid" is hybrid
-  if (/\bremote\b/.test(t)) return 'remote';
-  if (/\bon ?site\b|\bin office\b|\bin person\b/.test(t)) return 'onsite';
+  if (REMOTE_TYPE_PART.test(t)) return 'hybrid';
+  if (/\bremote\b|^virtual$/.test(t)) return 'remote';
+  if (/\bon ?site\b|\bin office\b|\bin person\b|^(?:office|site|office based|site based)$/.test(t)) return 'onsite';
   return null;
 }
 
