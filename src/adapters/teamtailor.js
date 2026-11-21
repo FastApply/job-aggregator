@@ -13,6 +13,8 @@
 // NOTE: the feed caps at 100 jobs/company with no pagination; the rare tenant with >100 open roles
 // is truncated to the 100 most recent.
 const CAP_HINT = 100;
+const { countriesFromLocation } = require('../utils/location-countries');
+const { remoteRegionCountries } = require('../utils/remote-regions');
 
 const stripCdata = (s) => String(s || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim();
 const tag = (block, name) => {
@@ -29,9 +31,29 @@ function workplaceType(rs) {
   return null;
 }
 
-function locationOf(block) {
+// A fully remote job whose location is NAMED for another market than its address: Dechra's
+// "Sales Representative" is "Remote - Sweden" on its page ("This role will operate within Sweden"),
+// but the location's address is the company's Boston, United States one, so the board stored it as
+// a US remote job, where US candidates were refused it and Swedish ones never saw it (supply loop
+// 2026-11-21). Virtasant names its remote locations "Latin America", "Canada", "Brazil" over an
+// Austin address the same way. The name is what candidates are shown, so it wins when it names a
+// country or region the address does not; an office job keeps its address.
+function namedElsewhere(name, country) {
+  if (!name) return false;
+  const named = [...countriesFromLocation(name), ...remoteRegionCountries(name)];
+  if (!named.length) return false;
+  const home = country ? countriesFromLocation(country) : [];
+  return !named.some((code) => home.includes(code));
+}
+
+function locationOf(block, remote) {
   const city = tag(block, 'tt:city');
   const country = tag(block, 'tt:country');
+  if (remote) {
+    const loc = block.match(/<tt:location>([\s\S]*?)<\/tt:location>/i);
+    const name = loc ? tag(loc[1], 'tt:name') : null;
+    if (namedElsewhere(name, country)) return name;
+  }
   const parts = [city, country].filter(Boolean);
   return parts.length ? parts.join(', ') : null;
 }
@@ -60,7 +82,7 @@ async function fetchJobs(clientname) {
       external_id: `teamtailor_${guid}`,
       title: tag(block, 'title'),
       department: tag(block, 'tt:department') || null,
-      location: locationOf(block),
+      location: locationOf(block, workplaceType(tag(block, 'remoteStatus')) === 'remote'),
       workplace_type: workplaceType(tag(block, 'remoteStatus')),
       employment_type: null,        // not published by teamtailor
       salary_min: null,             // not published
@@ -82,4 +104,4 @@ async function fetchJobs(clientname) {
   return { jobs, meta: { companyName: null, logoUrl: null, truncated: capped, capped } };
 }
 
-module.exports = { fetchJobs, feedUrl };
+module.exports = { fetchJobs, feedUrl, locationOf };
