@@ -15,8 +15,14 @@
  * so a job the reader now leaves untagged (the conditional ones) keeps "remote" for good. A job it
  * now reads hybrid or on-site is rewritten by its next crawl, and this only does that sooner.
  *
+ * Supply loop 2026-11-22 00h added the wordings of remote-boilerplate.js hasRemoteCaveat: a quoted
+ * or timed work-from-anywhere perk ("'Work from Anywhere' for 4 weeks in a year": Easyship in
+ * Bengaluru, Kepler in New York, Ocado, Thomson Reuters), "If this role is remote" (Checkr's pay
+ * note), and an office job saying it is not worked from home ("remote work will not be considered":
+ * SpaceX in Starbase; "No work from home"; "does not offer a Work from Home option").
+ *
  * Touches a row only when its text has one of those wordings (PART_WEEK_REMOTE,
- * CONDITIONAL_HOME_WORK), the reader no longer calls it remote, and the crawl's own classifier
+ * CONDITIONAL_HOME_WORK, hasRemoteCaveat), the reader no longer calls it remote, and the crawl's own classifier
  * agrees (classifyJob). Feed rows (external_id not "<ats>_...") are skipped: demand-crawl's upsert
  * never rewrites their tag, so nothing would restore one changed by mistake. An ATS that states its
  * own work model puts it back on the next crawl. The index trigger queues each changed row, so this
@@ -29,11 +35,12 @@ const fs = require('fs');
 const { stripHtml } = require('../src/utils/html');
 const { extractWorkplaceType, PART_WEEK_REMOTE, CONDITIONAL_HOME_WORK } = require('../src/utils/extract');
 const { classifyJob } = require('../src/utils/classify');
+const { hasRemoteCaveat } = require('../src/utils/remote-boilerplate');
 
 /** Pure. The row's new tags, or null to leave it. */
 function retagPartWeek(row) {
   const plain = String(stripHtml(row.description || '') || '').replace(/\s+/g, ' ');
-  if (!PART_WEEK_REMOTE.test(plain) && !CONDITIONAL_HOME_WORK.test(plain)) return null;
+  if (!PART_WEEK_REMOTE.test(plain) && !CONDITIONAL_HOME_WORK.test(plain) && !hasRemoteCaveat(plain)) return null;
   const workplace = extractWorkplaceType(row.title, row.location, plain);
   if (workplace === 'remote') return null;
   const tags = classifyJob({ title: row.title, location: row.location, workplace_type: workplace, description: plain });
@@ -82,7 +89,7 @@ async function main() {
         WHERE id > ${from} AND id <= ${to} AND removed_at IS NULL AND is_remote = true
           AND ($1::text[] IS NULL OR ats = ANY($1::text[])) AND left(external_id, length(ats) + 1) = ats || '_'
           AND description IS NOT NULL AND description <> 'N/A'
-          AND description ~* '(from home|remotely|remote|wfh)'`, [ATS]);
+          AND description ~* '(from home|remotely|remote|wfh|anywhere)'`, [ATS]);
     scanned += rows.length;
     const ids = [], wts = [];
     for (const row of rows) {
