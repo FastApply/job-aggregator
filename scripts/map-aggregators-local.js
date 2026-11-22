@@ -26,6 +26,7 @@
  * Env: APPLY, SOURCES, STALE_MONTHS, DB (staging only).
  */
 const { Pool } = require('pg');
+const { cutLocationSql, realCompanyNameSql } = require('../src/utils/aggregator-fields');
 
 const DB = process.env.DB || 'postgres://codev@localhost:5432/jobs_local';
 {
@@ -264,7 +265,9 @@ async function main() {
   // 3. Companies first: a job cannot exist without one.
   const ins = await q(`
     WITH b AS (
-      SELECT ats, slug, (array_agg(company_name ORDER BY length(coalesce(company_name,'')) DESC))[1] AS name
+      -- The longest REAL name: a scraped heading ("Description This") is never the employer's.
+      SELECT ats, slug, (array_agg(company_name ORDER BY length(coalesce(company_name,'')) DESC)
+                           FILTER (WHERE ${realCompanyNameSql('company_name')}))[1] AS name
         FROM agg_mapped WHERE company_name IS NOT NULL GROUP BY ats, slug),
     n AS (SELECT b.*, ${CAREER_CASE} AS career_url FROM b
            WHERE NOT EXISTS (SELECT 1 FROM companies c WHERE c.ats = b.ats AND lower(c.ats_slug) = b.slug))
@@ -306,7 +309,7 @@ async function main() {
         INSERT INTO jobs (external_id, company_id, ats, title, location, workplace_type, employment_type,
                           salary_min, salary_max, salary_currency, description, url, posted_at, raw_data,
                           first_seen_at, last_seen_at, created_at)
-        SELECT external_id, company_id, ats, left(title, 500), left(location, 300),
+        SELECT external_id, company_id, ats, left(title, 500), ${cutLocationSql('location')},
                CASE WHEN workplace_type ~ 'remote' THEN 'remote' WHEN workplace_type ~ 'hybrid' THEN 'hybrid'
                     WHEN workplace_type ~ 'site|onsite' THEN 'onsite' ELSE NULL END,
                left(employment_type, 50), salary_min, salary_max, salary_currency, description, url, posted_at,
@@ -323,4 +326,8 @@ async function main() {
   console.log(`\r  jobs inserted: ${n(inserted)}        `);
 }
 
-main().then(() => pool.end()).catch(async (e) => { console.error('FATAL', e.message); await pool.end(); process.exit(1); });
+if (require.main === module) {
+  main().then(() => pool.end()).catch(async (e) => { console.error('FATAL', e.message); await pool.end(); process.exit(1); });
+}
+
+module.exports = { FIELDS };
