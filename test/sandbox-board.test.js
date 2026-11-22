@@ -213,3 +213,13 @@ test('a Workday implementation tenant is a sandbox host (supply loop 2026-11-10)
     'https://wd1.myworkdaysite.com/recruiting/implant/External/job/Remote/Analyst_R5',
   ]) assert.equal(isSandboxPosting({ ats: 'workday', slug: 'alignmenthealthcare', url }), false, url);
 });
+
+test('Gem tenants are read from the posting URL; its demo tenants are sandboxes (pref-match loop 2026-11-21)', () => {
+  assert.deepEqual(boardFromUrl('https://jobs.gem.com/onetrust-llc-sandbox/7946574'), { ats: 'gem', slug: 'onetrust-llc-sandbox' });
+  assert.ok(sandboxMatch({ ats: 'gem', url: 'https://jobs.gem.com/onetrust-llc-sandbox/7946574' }));
+  assert.ok(sandboxMatch({ ats: 'gem', url: 'https://jobs.gem.com/oats-testing/am9icG9zdDp340t10YQP3swB0pTGfwMj' }));
+  assert.ok(sandboxMatch({ ats: 'gem', url: 'https://jobs.gem.com/sandboxschonfeld-com/am9icG9zdDq9icysZCmRG_SerP7oTi6Z' }));
+  assert.equal(sandboxMatch({ ats: 'gem', url: 'https://jobs.gem.com/retool/am9icG9zdDqk4ZpKCO0ylsdFNggW0Qv_' }), null);
+  assert.equal(sandboxMatch({ ats: 'gem', url: 'https://jobs.gem.com/onetrust/7946574' }), null);
+  assert.equal(sandboxSlugRule('sandboxvr'), null);
+});

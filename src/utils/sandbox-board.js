@@ -61,6 +61,11 @@ const ALLOWED_BOARDS = new Set([
 const SANDBOX_FAMILIES = [
   [/^dunder-mifflin[0-9a-f]{8}-/i, 'family:rippling-demo'],
   [/^sandbox[a-z0-9]+-\d{9,}$/i, 'family:teamtailor-demo'],
+  // Gem mints a customer's sandbox as `sandbox<domain>-<tld>`: "Sandbox Studios" at
+  // jobs.gem.com/sandboxschonfeld-com, six live rows whose text is "***DEMO JOB POST***", read
+  // 2026-11-21 (pref-match loop). Keep it in step with KNOWN_SANDBOX_BOARD_FAMILIES in
+  // sandbox-job-board.util.ts.
+  [/^sandbox[a-z0-9]+-(?:com|io|co|ai|net)$/i, 'family:gem-demo'],
 ];
 
 // Demo tenants read by hand whose name the rule cannot see. Personio's "demorecruiting": page title
@@ -71,7 +76,9 @@ const SANDBOX_FAMILIES = [
 // to approvals) Customer Success Manager", an apply route answering HTTP 500; 60 First Apply browser
 // sessions in 14 days, none submitted, read 2026-11-08. Keep it in step with KNOWN_SANDBOX_BOARDS in
 // sandbox-job-board.util.ts.
-const KNOWN_SANDBOX_SLUGS = new Set(['demorecruiting', 'cmsprep', 'jobvitemidmarket']);
+// Gem's own test tenant "oats-testing" (employer "Gem (Oats)", one First Apply submission
+// 2026-10-30), read 2026-11-21: "testing" is no whole-word "test".
+const KNOWN_SANDBOX_SLUGS = new Set(['demorecruiting', 'cmsprep', 'jobvitemidmarket', 'oatstesting']);
 
 // Vendor test hosts whose tenant name says nothing. A Workday implementation tenant lives on an
 // `impl-wdN` (or `wdN-impl`) data centre: the customer's copy for configuring and testing, not its
@@ -161,6 +168,10 @@ const PATH_TENANT = [
   ['workable', /^apply\.workable\.com$/],
   ['rippling', /^ats\.rippling\.com$/],
   ['jobvite', /^jobs\.jobvite\.com$/],
+  // jobs.gem.com/<tenant>/<id>: "OneTrust LLC [Sandbox]" at jobs.gem.com/onetrust-llc-sandbox got a
+  // First Apply submission on 2026-11-21 (pref-match loop); Gem was in no table, so its URL named
+  // no board.
+  ['gem', /^jobs\.gem\.com$/],
 ];
 // Path words that are routes of the vendor's site, not a tenant.
 const ROUTE_WORDS = new Set(['embed', 'api', 'j', 'o', 'v1', 'jobs', 'job', 'apply']);
