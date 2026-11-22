@@ -9,7 +9,7 @@
  */
 
 const { withoutNordicIntern } = require('./nordic-intern');
-const { withoutRemoteBoilerplate } = require('./remote-boilerplate');
+const { withoutRemoteBoilerplate, NOT_WORKED_FROM_HOME } = require('./remote-boilerplate');
 const { jobStatesHybrid } = require('./hybrid-work');
 
 // ── Remote Detection ──────────────────────────────────────────────
@@ -60,6 +60,9 @@ const REMOTE_NEGATIVE = [
   // field extract.js REMOTE_FIELD_NO reads. Without it REMOTE_POSITIVE's "remote position" won.
   /\bremote(?:\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity))?\s*\??\s*:\s*no\b/i,
   /\bremote\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity)\s*\??\s*[-–—]\s*no\b/i,
+  // "remote work will not be considered", "No work from home", "does not offer a Work from Home
+  // option" (remote-boilerplate.js): without it the "work from home" cue below read them as remote.
+  NOT_WORKED_FROM_HOME,
 ];
 
 function classifyRemote(title, location, workplaceType, description) {
