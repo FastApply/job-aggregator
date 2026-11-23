@@ -15,7 +15,12 @@ const CONDITIONAL_REMOTE = /\b(?:if|unless|whether)\s+(?:this|the|it)\b[^.;!?]{0
 // San Francisco, Denver and Nashville office roles remote ("At Checkr, we believe an in office
 // work environment strengthens collaboration"), and remote-only and New York searchers got them
 // (supply loop 2026-11-22 00h).
-const CONDITIONAL_MODE = /\b(?:if|unless|whether)\s+(?:this|the|your)\s+(?:position|role|job|opportunity)\s+is\s+(?:fully\s+|100%\s+)?remote\b[^.;!?]*/gi;
+//
+// And the same policy for the other modes, with its label: PointClickCare's "For Hybrid Roles: If
+// this role is Hybrid, there will be an expectation to..." sits on every posting, its remote ones
+// too ("Remote - US", "Remote or Mississauga"), and its "hybrid" made all of them hybrid (retag of
+// 2026-11-22, 30 of the 91 rows put back by hand).
+const CONDITIONAL_MODE = /(?:\bfor\s+(?:remote|hybrid|on-?site|in[\s-]office)\s+(?:roles|positions|jobs)\s*:\s*)?\b(?:if|unless|whether)\s+(?:this|the|your)\s+(?:position|role|job|opportunity)\s+is\s+(?:fully\s+|100%\s+)?(?:remote|hybrid|on-?site|in[\s-]office)\b[^.;!?]*/gi;
 
 /**
  * A perk with a length, from a benefits list: Altruist's "One month work from anywhere policy" on
@@ -82,13 +87,17 @@ function withoutRemoteBoilerplate(text) {
  * a company without offices ("We do not use offices. Everyone can work from home").
  */
 const NOT_WORKED_FROM_HOME = new RegExp([
-  '\\bremote(?:\\s+work(?:ing)?)?\\s+(?:will|would|can|could|may)\\s+not\\s+be\\s+(?:considered|offered|available|possible|permitted|allowed|supported|accepted|an?\\s+option)\\b',
+  // Not where from: "Remote work will not be permitted from any other state at this time" (Oracle's
+  // remote postings, after the states it hires in).
+  '\\bremote(?:\\s+work(?:ing)?)?\\s+(?:will|would|can|could|may)\\s+not\\s+be\\s+(?:considered|offered|available|possible|permitted|allowed|supported|accepted|an?\\s+option)\\b(?!\\s+(?:from|in|outside)\\b[^.;!?]{0,40}?\\b(?:other|another|outside|abroad|countr(?:y|ies)|states?|provinces?|regions?)\\b)',
   '\\bno\\s+(?:work(?:ing)?[\\s-]+from[\\s-]+home|wfh)\\b(?!\\s+(?:days?|stipends?|allowances?|equipment|budget))',
   '\\bnot\\s+(?:an?\\s+)?(?:\\w+\\s+)?work[\\s-]+from[\\s-]+home\\s+(?:position|role|job|opportunity)\\b',
   '\\bno\\s+(?:\\w+\\s+){0,2}right\\s+to\\s+work\\s+(?:from\\s+home|remotely)\\b',
   // Five Iron's on-site SOC, on each of its postings.
   '\\bdoes\\s+not\\s+use\\s+a\\s+virtual\\s+(?:soc|security\\s+operations|office|team)\\b',
-  '\\b(?:does|do|will)\\s+not\\s+(?:allow|permit|support|offer)\\b[^.;!?]{0,80}?\\b(?:work(?:ing)?[\\s-]+from[\\s-]+home|wfh|remote\\s+work(?:ing)?)\\b(?![^.;!?]{0,40}\\b(?:outside|abroad|internationally|from\\s+(?:other|another)\\s+(?:countr|state)|across\\s+borders))',
+  // Not a limit on where: "We do not support international remote work arrangements for this role.
+  // ... While this is a remote position" (Dayforce, a remote job within the US).
+  '\\b(?:does|do|will)\\s+not\\s+(?:allow|permit|support|offer)\\b(?![^.;!?]{0,80}?\\b(?:international(?:ly)?|overseas|cross[\\s-]border|out[\\s-]of[\\s-](?:state|country)|foreign)\\b)[^.;!?]{0,80}?\\b(?:work(?:ing)?[\\s-]+from[\\s-]+home|wfh|remote\\s+work(?:ing)?)\\b(?![^.;!?]{0,40}\\b(?:outside|abroad|internationally|from\\s+(?:other|another)\\s+(?:countr|state)|across\\s+borders))',
 ].join('|'), 'i');
 
 /**
