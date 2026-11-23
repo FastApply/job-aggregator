@@ -69,3 +69,13 @@ test('a named benefit after "up to" is not the salary (verdict audit, 2026-11-20
   const got = extractSalary('Salary: $70,000 per year. Fertility HRA (up to $10,000 per year).');
   assert.deepStrictEqual([got?.min, got?.max], ['70000', '70000']);
 });
+
+test('a figure named as ad spend just after it is not the salary', () => {
+  // HireBoost's Paid Media Manager (verdict audit, 2026-11-23 03h).
+  const got = extractSalary(
+    'Manage campaigns (Search, Display, PMax) averaging $30K–$50K/month in ad spend per client portfolio\nBenefits\nSalary: $3,000–$3,500 USD/month (flexible for exceptional candidates)'
+  );
+  assert.deepStrictEqual([got?.min, got?.max, got?.interval], ['3000', '3500', 'monthly']);
+  const pay = extractSalary('Base salary $120,000 - $150,000 in total compensation');
+  assert.deepStrictEqual([pay?.min, pay?.max], ['120000', '150000']);
+});
