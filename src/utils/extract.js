@@ -16,6 +16,11 @@ const { jobStatesHybrid } = require('./hybrid-work');
 // $30,000 in Adoption Assistance" were stored as $10,000 and $30,000 a year and refused against
 // the candidates' salary floors. Same words as BENEFIT_NAMED in the backend.
 const NOT_PAY = /\b(?:bonus(?:es)?|commissions?|sign(?:ing|[\s-]on)|stipend|allowance|tuition|reimburs\w*|relocation|referral|revenue|budget|funding|raised|valuation|quota|equity|401\(?k\)?|deposit|fees?|hra|hsa|fsa|lsa|fertility|adoption|surrogacy|family[\s-]forming|childcare|wellness|assistance|(?:life|disability|ad&d|accident)\s+insurance|insurance\s+coverage)\b/i;
+// Money named for what it is just after the figure. Verdict audit, 2026-11-23 03h: HireBoost's Paid
+// Media Manager ("campaigns ... averaging $30K–$50K/month in ad spend per client portfolio"; "Salary:
+// $3,000–$3,500 USD/month") was stored as paying $30,000 - $50,000 a month and passed a $55,000
+// floor. Same words as NOT_THE_PAY_AFTER in the backend.
+const NOT_PAY_AFTER = /^[^.;•]{0,30}?\b(?:in|of)\s+(?:(?:ad|media|marketing|advertising|client|annual|monthly|total|paid)\s+)*(?:spend|budgets?|revenue|sales|funding|arr|pipeline|billings?|assets\s+under\s+management)\b/i;
 const IS_PAY = /\b(?:salary|salaries|pay|compensation|wages?|earnings|ote|remuneration|hourly|base)\b/i;
 const STUDENT_DEBT = /\b(?:student\s+(?:debt|loans?)|debt)\b(?:\s+pay\s*down)?/gi;
 const OTHER_MONEY_REACH = 200;
@@ -37,7 +42,7 @@ function isOtherMoney(text, match) {
   const before = raw.replace(STUDENT_DEBT, ' ');
   const tail = text.slice(match.index + match[0].length).split(/[.!?]\s|\n|•/, 1)[0].slice(0, 60);
   if (IS_PAY.test(before) || IS_PAY.test(tail)) return false;
-  return before !== raw || NOT_PAY.test(before);
+  return before !== raw || NOT_PAY.test(before) || NOT_PAY_AFTER.test(tail);
 }
 
 /**
