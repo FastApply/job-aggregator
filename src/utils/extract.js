@@ -415,6 +415,19 @@ function extractWorkplaceTypeFromDescription(title, location, description) {
 }
 
 /**
+ * "Contract" as the way the job is held, not the word in a duty: Century Communities' Greenhouse
+ * "Sales Consultant" (a salaried role with a closing bonus; "Own the customer journey from initial
+ * inquiry through contract, construction updates, and closing") was stored as Contract, so the
+ * backend passed it as contract work to a candidate who takes only part-time or contract roles
+ * (pref-match loop, 2026-11-22 18h). Sales, legal and procurement postings say "contract" of the
+ * deals they handle ("contract negotiation", "buyer contracts"); only an employment phrase counts.
+ */
+const CONTRACT_IN_TITLE =
+  /[([]\s*(?:fixed[\s-]term\s+|temporary\s+|short[\s-]term\s+)?contract(?:or)?(?:[\s-]to[\s-]hire)?(?:\s*[-–,]\s*[^)\]]{0,30})?\s*[)\]]|[-–|,]\s*(?:fixed[\s-]term\s+)?contract(?:or)?\s*$|^\s*(?:contract|contractor)\s*[-–:|]|\bcontract[\s-]to[\s-](?:hire|perm(?:anent)?)\b|\bfreelance\b|\b1099\b/;
+const CONTRACT_WORK =
+  /\bcontract(?:or)?[\s-]+(?:role|position|job|basis|assignment|opportunit(?:y|ies)|engagement|employment|hire|term|length|duration|period|placement)\b|\b(?:on\s+an?|as\s+an?|this\s+is\s+an?|is\s+an?|fixed[\s-]term|short[\s-]term|long[\s-]term|temporary|freelance|independent|w-?2|1099|c2c|corp[\s-]to[\s-]corp|\d+\s*[-–]?\s*(?:month|week|year)s?|(?:three|six|nine|twelve)[\s-](?:month|week)s?)\s+contract(?:or)?\b|\bcontract[\s-]to[\s-](?:hire|perm(?:anent)?)\b|\b(?:employment|job|position|contract|engagement)\s+type\s*:?\s*contract(?:or)?\b|\bfreelance\b|\b1099\b/;
+
+/**
  * Detect employment type from job fields.
  */
 function extractEmploymentType(title, description) {
@@ -422,7 +435,7 @@ function extractEmploymentType(title, description) {
 
   if (/\bfull[\s-]?time\b/.test(text)) return 'Full-time';
   if (/\bpart[\s-]?time\b/.test(text)) return 'Part-time';
-  if (/\bcontract(?:or)?\b|\bfreelance\b|\b1099\b/.test(text)) return 'Contract';
+  if (CONTRACT_IN_TITLE.test(String(title || '').toLowerCase()) || CONTRACT_WORK.test(text)) return 'Contract';
   if (/\binternship\b|\bintern\b/.test(text)) return 'Internship';
   if (/\btemporary\b|\btemp\b/.test(text)) return 'Temporary';
 
