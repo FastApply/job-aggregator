@@ -6,6 +6,7 @@
  */
 const { query } = require('../db/connection');
 const { discoverConfig } = require('../adapters/workday');
+const { breezyPageDescription } = require('../adapters/breezy');
 const { parseWorkdayUrl, workdayCxsUrl } = require('../utils/workday-url');
 const { parseOracleUrl, oracleDetailUrl } = require('../utils/oracle-url');
 const { fetchUnlockedHtml } = require('../utils/brightdata-proxy');
@@ -381,6 +382,10 @@ async function fetchBreezyDescription(job) {
   // Try JSON-LD first
   const ld = extractJsonLdDescription(html);
   if (ld) return ld;
+  // Then the page's own description block, which some Breezy pages carry with no JSON-LD
+  // (breezyPageDescription): the og:description below is only its first 300 characters.
+  const page = breezyPageDescription(html);
+  if (page) return page;
   // Breezy has description in og:description meta tag
   const ogMatch = html.match(/property="og:description"[^>]*content="([^"]*)"/i);
   if (ogMatch?.[1] && ogMatch[1].length > 50) return ogMatch[1];

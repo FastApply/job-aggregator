@@ -37,6 +37,33 @@ function workplaceOf(location) {
   return location.is_remote ? 'remote' : null;
 }
 
+/**
+ * The posting's own text from its page: the `<div class="description">` Breezy renders, inner HTML
+ * kept. Read when the page carries no JSON-LD JobPosting. Some Breezy pages ship none, and the
+ * description backfill then kept only the 300-character og:description: Committee for Children's
+ * "Senior Revenue Operations Manager" reached FastApply's matcher as one paragraph, without "This
+ * position is remote; employees are eligible to work remotely in any of the following states: ...
+ * TX ...", and was refused on Location for a candidate in Houston (FastApply supply loop,
+ * 2026-11-23 06h). 443 of 7,004 sampled Breezy rows held 300 characters or fewer.
+ */
+function breezyPageDescription(html) {
+  const open = /<div[^>]*\bclass="description"[^>]*>/i.exec(String(html || ''));
+  if (!open) return null;
+  const start = open.index + open[0].length;
+  const tags = /<\/?div\b[^>]*>/gi;
+  tags.lastIndex = start;
+  let depth = 1;
+  let m;
+  while ((m = tags.exec(html)) !== null) {
+    depth += m[0][1] === '/' ? -1 : 1;
+    if (depth === 0) {
+      const inner = html.slice(start, m.index).trim();
+      return inner.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().length > 100 ? inner : null;
+    }
+  }
+  return null;
+}
+
 async function fetchJobDetail(url) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -56,6 +83,7 @@ async function fetchJobDetail(url) {
         }
       } catch { /* invalid JSON-LD */ }
     }
+    if (!description) description = breezyPageDescription(html);
 
     // Extract company logo from gallery CDN
     let logoUrl = null;
@@ -135,4 +163,4 @@ async function fetchJobs(clientname) {
   };
 }
 
-module.exports = { fetchJobs, workplaceOf };
+module.exports = { fetchJobs, workplaceOf, breezyPageDescription };

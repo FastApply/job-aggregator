@@ -22,6 +22,15 @@ const NOT_PAY = /\b(?:bonus(?:es)?|commissions?|sign(?:ing|[\s-]on)|stipend|allo
 // floor. Same words as NOT_THE_PAY_AFTER in the backend.
 const NOT_PAY_AFTER = /^[^.;•]{0,30}?\b(?:in|of)\s+(?:(?:ad|media|marketing|advertising|client|annual|monthly|total|paid)\s+)*(?:spend|budgets?|revenue|sales|funding|arr|pipeline|billings?|assets\s+under\s+management)\b/i;
 const IS_PAY = /\b(?:salary|salaries|pay|compensation|wages?|earnings|ote|remuneration|hourly|base)\b/i;
+// A figure given "towards" something is a contribution. FastApply supply loop, 2026-11-23 06h:
+// Amoria Group's "Up to £500 per year towards your own personal development" was stored as a £500
+// monthly salary on its Manchester "Recruitment Business Development Consultant". Same words as
+// TOWARDS_AFTER in the backend.
+const TOWARDS_AFTER = /^[^.;•$£€\d]{0,30}?\btowards?\b/i;
+// The word right before a figure says what it is, even after the sentence named the pay: La Palette
+// Rouge's "Competitive salary, bonus scheme, and company car or car allowance (up to £550 per month)"
+// was stored as a £550 monthly salary (same run). Same reach as NEAR_BEFORE in the backend.
+const NEAR_BEFORE = 30;
 const STUDENT_DEBT = /\b(?:student\s+(?:debt|loans?)|debt)\b(?:\s+pay\s*down)?/gi;
 const OTHER_MONEY_REACH = 200;
 const SENTENCE_START = /(?:[.!?]\s+(?=[A-Z])|\n|•)/g;
@@ -41,8 +50,11 @@ function isOtherMoney(text, match) {
   const raw = head.slice(from);
   const before = raw.replace(STUDENT_DEBT, ' ');
   const tail = text.slice(match.index + match[0].length).split(/[.!?]\s|\n|•/, 1)[0].slice(0, 60);
-  if (IS_PAY.test(before) || IS_PAY.test(tail)) return false;
-  return before !== raw || NOT_PAY.test(before) || NOT_PAY_AFTER.test(tail);
+  const near = before.slice(-NEAR_BEFORE);
+  const namedNear = NOT_PAY.test(near) && !IS_PAY.test(near);
+  if (IS_PAY.test(tail)) return false;
+  if (!namedNear && IS_PAY.test(before)) return false;
+  return before !== raw || namedNear || NOT_PAY.test(before) || NOT_PAY_AFTER.test(tail) || TOWARDS_AFTER.test(tail);
 }
 
 /**
