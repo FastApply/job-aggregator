@@ -20,7 +20,8 @@ const html = (body, status = 200, headers = {}) =>
 const URL_ = 'https://orangetheory-fitness-careers.careerplug.com/jobs/3113528/apps/new';
 
 test('careerplug is on the description backfill, one posting at a time', () => {
-  assert.deepEqual(backfill.ATS_CONFIG.careerplug, { batchSize: 30, concurrency: 1 });
+  // ownLoop since supply loop 2026-11-23 00h: CareerPlug drains in its own loop (careerplug-desc-own-loop.test.js).
+  assert.deepEqual(backfill.ATS_CONFIG.careerplug, { batchSize: 30, concurrency: 1, ownLoop: true });
 });
 
 test('careerplug: the backfill reads the posting JSON-LD text, as the crawl does', async (t) => {

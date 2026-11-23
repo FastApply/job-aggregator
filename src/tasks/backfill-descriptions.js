@@ -37,7 +37,13 @@ const ATS_CONFIG = {
   eightfold:       { batchSize: 40, concurrency: 2 },
   avature:         { batchSize: 30, concurrency: 1 },
   // CareerPlug reads the text of a board's first 400 postings only (careerplug.fetchDescription).
-  careerplug:      { batchSize: 30, concurrency: 1 },
+  // Its own loop (scripts/render-worker.js): franchise boards hold thousands past 400 (Orangetheory about 2,700,
+  // Planet Fitness, SERVPRO, IICRC), and at 30 rows a shared cycle the rows crawled before the
+  // backfill went live were still empty a day later. FastApply 2026-11-22 11-23Z: 52 refusals
+  // "Industry cannot be checked: the posting has no description", every one a CareerPlug row,
+  // and 200 of 867 CareerPlug rows its searches returned had no text (ids 1415M-1440M).
+  // The adapter's queue keeps the request rate at one per CAREERPLUG_GAP_MS.
+  careerplug:      { batchSize: 30, concurrency: 1, ownLoop: true },
   // The crawl stores only a teaser (UKG) or no text (Workforce Now, SilkRoad); one request a
   // posting fills it. Each adapter paces its own requests, so concurrency only overlaps waiting
   // (a UKG page takes 3-25 s). `ownLoop`: the worker drains these in a loop of their own
