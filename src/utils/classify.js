@@ -82,8 +82,9 @@ function classifyRemote(title, location, workplaceType, description) {
 
   // Title or location says "Remote", "Worldwide", "Anywhere"
   // ...as a work model: "Remote Operations Center Specialist" and "Remote Sensing Analyst" are not.
-  if (/\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))/i.test(title || '')) return true;
-  if (/\bremote\b/i.test(location || '') && !/hybrid/i.test(location || '')) return true;
+  // Nor its negation: "MSP Tier 2 IT Support Technician -Not Remote" (supply loop 2026-11-23 12h).
+  if (/(?<!\bnot\s+|\bnon[\s-]?)\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|resolution|operations?\s+cent(?:er|re)))/i.test(title || '')) return true;
+  if (/(?<!\bnot\s+|\bnon[\s-]?)\bremote\b/i.test(location || '') && !/hybrid/i.test(location || '')) return true;
   // The location IS the work model ("Worldwide", "Global (Remote)"), or names "Anywhere" as its
   // place ("Anywhere, OH": Workday's remote-within-a-state). Not a word inside a place or an office:
   // "1405 Worldwide Blvd", "Bonifacio Global City", "MUFG Global Service Private Ltd. - Bengaluru".
