@@ -98,6 +98,16 @@ function extractSalary(rawText) {
   }
 
   // The first match that is pay, passing over money that is something else (isOtherMoney).
+  // A bare "$" followed by the dollar it is: "a monthly pay of $670.00 AUD" (Elite Personal
+  // Assistance, Zoho) was stored USD (supply loop 2026-11-23 12h). Symbol patterns only.
+  const DOLLAR_CODE = /^\s*([kK])?\s*(AUD|CAD|NZD|SGD|HKD|MXN|USD)\b/;
+  function dollarCurrency(symbol, m) {
+    if (symbol !== '$') return null;
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 12);
+    const code = after.match(DOLLAR_CODE) || m[0].match(/\b(AUD|CAD|NZD|SGD|HKD|MXN)\b/);
+    return code ? code[2] || code[1] : null;
+  }
+
   function firstPay(re) {
     for (const m of text.matchAll(new RegExp(re.source, `${re.flags}g`))) {
       if (!isOtherMoney(text, m)) return m;
@@ -123,7 +133,7 @@ function extractSalary(rawText) {
     /([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?\s*(?:USD|CAD|AUD|GBP|EUR)?\s*(?:[-–—]|to)\s*(?:[$£€]|[AC]\$)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/
   );
   if (symbolRangeMatch) {
-    const currency = currencyMap[symbolRangeMatch[1]] || 'USD';
+    const currency = dollarCurrency(symbolRangeMatch[1], symbolRangeMatch) || currencyMap[symbolRangeMatch[1]] || 'USD';
     let min = parseNum(symbolRangeMatch[2]);
     let max = parseNum(symbolRangeMatch[4]);
     if (symbolRangeMatch[3]) min *= 1000;
@@ -155,7 +165,7 @@ function extractSalary(rawText) {
     /(?:salary|compensation|pay|base|total\s*comp|starting\s*at|up\s*to|earning)\s*(?:range\s*)?(?:of\s*|is\s*|:\s*|=\s*)?([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/i
   );
   if (singleMatch) {
-    const currency = currencyMap[singleMatch[1]] || 'USD';
+    const currency = dollarCurrency(singleMatch[1], singleMatch) || currencyMap[singleMatch[1]] || 'USD';
     let val = parseNum(singleMatch[2]);
     if (singleMatch[3]) val *= 1000;
     const interval = detectInterval(text, singleMatch.index, singleMatch.index + singleMatch[0].length);

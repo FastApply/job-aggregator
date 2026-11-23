@@ -62,3 +62,16 @@ test('the retag touches only on-site statements the reader and classifier now ag
   const tags = classifyJob({ title: onsite[0][0], location: onsite[0][1], workplace_type: 'onsite', description: onsite[0][2] });
   assert.strictEqual(tags.is_remote, false);
 });
+
+// A bare "$" with the dollar named after the figure: Greenhouse's pay block "$55,000 — $65,000
+// CAD" (346 of 6,144 rows with pay in a remote sample were stored USD), Zoho's "a monthly pay of
+// $670.00 AUD".
+test('a dollar named after the figure is that dollar', () => {
+  const { extractSalary } = require('../src/utils/extract');
+  assert.strictEqual(extractSalary('Base Salary Range $55,000 &mdash; $65,000 CAD').currency, 'CAD');
+  assert.strictEqual(extractSalary('Start with a monthly pay of $670.00 AUD during the probationary period').currency, 'AUD');
+  assert.strictEqual(extractSalary('Base pay $60k-$70k AUD').currency, 'AUD');
+  assert.strictEqual(extractSalary('Salary: $120,000 - $150,000 USD per year').currency, 'USD');
+  assert.strictEqual(extractSalary('salary of $85,000 per year').currency, 'USD');
+  assert.strictEqual(extractSalary('The pay is £40,000 - £45,000').currency, 'GBP');
+});
