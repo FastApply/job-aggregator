@@ -34,6 +34,7 @@ const https = require('https');
 const { query, closeDb } = require('../db/connection');
 const logger = require('../logger');
 const { classifyJob } = require('../utils/classify');
+const { feedRemoteTags } = require('../utils/feed-workplace');
 const { isSupportedAts, normalizeAts, SUPPORTED_ATS } = require('../utils/supported-ats');
 const { findFeedTwins } = require('../utils/feed-twins');
 const { workableFeedCompany } = require('../utils/workable-feed-company');
@@ -222,7 +223,10 @@ async function upsertNormalized(n) {
     [n.company, c.domain, c.ats, c.slug, c.careerUrl, `demand_${n.source}`]);
   const companyId = cRes.rows[0]?.id;
   if (!companyId) return 0;
-  const tags = classifyJob({ title: n.title, location: n.location, description: n.description || '', workplace_type: n.workplaceType }) || {};
+  // The feed's "remote" stands only when the posting's own words say remote (feed-workplace.js):
+  // feeds call on-site postings remote, and classifyJob takes a stated "remote" as given.
+  const workplaceType = n.workplaceType === 'remote' ? feedRemoteTags(n).workplace_type : n.workplaceType;
+  const tags = classifyJob({ title: n.title, location: n.location, description: n.description || '', workplace_type: workplaceType }) || {};
   const raw = JSON.stringify({ source: `demand_${n.source}`, applyUrl: n.jobUrl });
   const jRes = await query(
     `INSERT INTO jobs (external_id, company_id, ats, title, location, workplace_type, description, url,
@@ -232,8 +236,8 @@ async function upsertNormalized(n) {
        location = EXCLUDED.location, description = COALESCE(EXCLUDED.description, jobs.description),
        url = EXCLUDED.url, last_seen_at = NOW(), removed_at = NULL
      RETURNING (xmax = 0) AS inserted`,
-    [String(n.externalId), companyId, c.ats, n.title, n.location, n.workplaceType, n.description, n.jobUrl,
-      n.postedAt, n.workplaceType === 'remote' || !!tags.is_remote, !!tags.remote_worldwide, tags.experience_level || null, raw]);
+    [String(n.externalId), companyId, c.ats, n.title, n.location, workplaceType, n.description, n.jobUrl,
+      n.postedAt, workplaceType === 'remote' || !!tags.is_remote, !!tags.remote_worldwide, tags.experience_level || null, raw]);
   return jRes.rows[0]?.inserted ? 1 : 0;
 }
 
