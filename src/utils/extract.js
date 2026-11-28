@@ -294,7 +294,16 @@ const PART_WEEK_REMOTE = new RegExp([
 ].join('|'), 'i');
 // Home or remote work on a condition ("whenever it suits", "if the work activity allows"): read by
 // the remote statement below as no work model. Exported for scripts/retag-part-week-remote.js.
-const CONDITIONAL_HOME_WORK = /\bwork(?:ing|s)?\s+(?:from\s+home|remotely|remote)\s*,?\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\s+to|as\s+long\s+as|provided)\b/i;
+//
+// Not a condition on where the employee lives: that is how a remote job names its area. "Candidates
+// may work remotely, provided they reside in a state where Verano currently has business
+// operations", "available to work remotely as long as you live in one of these states: AR, AZ, FL",
+// "open to this person working remote as long as consistency with UK timezone" (retag of
+// 2026-11-22: 21 of the 91 rows put back by hand).
+const RESIDENCE_CONDITION =
+  '(?=[^.;!?]{0,60}?\\b(?:live|lives|living|reside|resides|residing|residents?|located|based(?!\\s+on\\b)|time\\s*-?\\s*zones?)\\b)';
+const ON_CONDITION = '\\s*,?\\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\\s+to|as\\s+long\\s+as|provided)\\b';
+const CONDITIONAL_HOME_WORK = new RegExp(`\\bwork(?:ing|s)?\\s+(?:from\\s+home|remotely|remote)${ON_CONDITION}(?!${RESIDENCE_CONDITION})`, 'i');
 
 // Remote as the way THIS job is worked, read from a description. The bare word is no evidence:
 // rows the ATS gives no work model for are tagged here, and a remote-only candidate's search is
@@ -311,7 +320,8 @@ const CONDITIONAL_HOME_WORK = /\bwork(?:ing|s)?\s+(?:from\s+home|remotely|remote
 const REMOTE_STATEMENT = new RegExp([
   // fully remote / 100% remote, unless what follows shows it is about other jobs.
   '\\b(?:fully|100\\s?%|completely|entirely|permanently|exclusively|totally)[\\s-]+remote(?:ly)?\\b(?!\\s+(?:positions|roles|jobs|employees|workers|staff|status)\\b)',
-  '\\bremote\\s+(?:working\\s+)?(?:position|role|job|opportunity|assignment|contract|employee|worker|based)\\b(?!\\s+sites?\\b)',
+  // "Candidates residing in the following states will be considered for remote employment" (Oracle).
+  '\\bremote\\s+(?:working\\s+)?(?:position|role|job|opportunity|assignment|contract|employee|worker|based|employment)\\b(?!\\s+sites?\\b)',
   '\\bremote[\\s-](?:first|only)\\b',
   // Not the people: "overseeing ... all remote employees reporting to that office" (Vega, an
   // office manager in Newport Beach, CA, applied for a candidate in Indiana, 2026-11-02).
@@ -326,7 +336,7 @@ const REMOTE_STATEMENT = new RegExp([
   // "work remotely", "can work fully remote", "working from home". Not "work with remote teams",
   // a stipend for it, or a few days of it ("work remotely up to 2 days a week").
   // Nor a perk: "the option to work from home" (Frequentis, an office job in Vienna, 2026-10-31).
-  '(?<!\\b(?:option|ability|possibility|opportunity|chance|flexibility)\\s+to\\s)\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri)(?:days?)?\\b)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))(?!\\s*,?\\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\\s+to|as\\s+long\\s+as|provided)\\b)',
+  `(?<!\\b(?:option|ability|possibility|opportunity|chance|flexibility)\\s+to\\s)\\bwork(?:ing|s)?\\s+(?:(?:fully|entirely|completely|primarily|mostly|100\\s?%)\\s+)?(?:remotely|remote(?!\\s+(?:teams?|sites?|locations?|areas?|staff|colleagues|stakeholders|clients|customers|employees|workers))|from\\s+home(?!\\s+(?:stipend|reimbursement|allowance|equipment|budget|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri)(?:days?)?\\b)))\\b(?!\\s+(?:\\d|up\\s+to|one|two|three|four|once|twice|on\\s+occasion|occasionally|as\\s+needed|part[\\s-]|some|\\w+\\s+days?\\b))(?!${ON_CONDITION}(?!${RESIDENCE_CONDITION}))`,
   // "Location: Remote", "Location : India, Remote", "Work Arrangement: Fully remote", "Position Type: Full-Time, Remote".
   '\\b(?:location|workplace|arrangement|set-?up|working\\s+conditions|work\\s+(?:mode|model|style|type|schedule)|position\\s+type|job\\s+type)\\s*(?:\\([^)]*\\))?\\s*[:;\\-–—]?\\s*(?:[\\w .,/&\\-]{0,30}[,:/|\\-–—]\\s*)?remote\\b(?!\\s+(?:sites?|locations?|areas?))',
   // Workday's field: "Remote Type - Remote"; "Remote Type: On-site" reads as on-site below.
@@ -352,6 +362,36 @@ function statesRemote(title, description) {
   // "Ajaia is hiring a remote Product Manager": the word against the job's own title.
   const name = String(title || '').trim().toLowerCase();
   return name.length > 3 && text.toLowerCase().includes(`remote ${name}`);
+}
+
+// The posting says THIS job is hybrid: "This is a hybrid role", "the position will be hybrid", its
+// own "#LI-Hybrid" tag, a field of its own ("Location: Hybrid", "Location Designation: Hybrid - 3
+// days per quarter"). Not the employer's policy for hybrid roles ("If this role is Hybrid, ..."),
+// which remote-boilerplate.js cuts before this is read, nor an offer of either ("Location: Hybrid
+// or remote").
+const THIS_JOB_HYBRID = new RegExp([
+  '(?<!\\b(?:if|unless|whether|when|where)\\s+)\\b(?:this|the)\\s+(?:is\\s+an?\\s+hybrid|(?:role|position|job|opportunity)\\s+(?:is|will\\s+be)\\s+(?:an?\\s+)?hybrid)\\b',
+  '#li-hybrid\\b',
+  '\\b(?:location(?:\\s+designation)?|work(?:place)?\\s*(?:type|model|mode|arrangement|location))\\s*:\\s*hybrid\\b(?!\\s*(?:or|/|,)\\s*(?:fully\\s+)?remote)',
+].join('|'), 'i');
+
+/**
+ * Whether a job whose LOCATION says remote stays remote although its description names hybrid work.
+ * The location is the ATS's field for this job; the hybrid words in a body are mostly an offer of
+ * either ("Hybrid or remote working setup across the Netherlands", "Fully Remote / Hybrid (2 days in
+ * the office)", "Superhuman offers a dynamic hybrid model, and candidates in this role can be based
+ * remotely") or a company perk ("Hybrid working (blend of home and office working)"). Those were
+ * stored hybrid, out of remote-only searches (retag of 2026-11-22: 38 of the 91 rows put back by
+ * hand). Hybrid still wins where the location or title names it, where the body sets office days
+ * ("Tuesday through Thursday, with the option to work remotely on Mondays and Fridays"), or where it
+ * says this job is hybrid.
+ */
+function remoteLocationOutranksHybrid(title, location, body) {
+  const loc = String(location || '');
+  if (!REMOTE_IN_HEAD.test(loc) || /\bhybrid\b/i.test(loc)) return false;
+  if (HYBRID_INTL.test(`${title || ''} ${loc}`.toLowerCase()) || jobStatesHybrid(title, loc, '')) return false;
+  const text = String(body || '').replace(/\s+/g, ' ');
+  return !OFFICE_DAYS.test(text) && !PART_WEEK_REMOTE.test(text) && !THIS_JOB_HYBRID.test(text);
 }
 
 function extractWorkplaceType(title, location, description) {
@@ -381,7 +421,7 @@ function extractWorkplaceType(title, location, description) {
   if (FULL_REMOTE_INTL.test(fields) && !hybrid) return 'remote';
   // Remote only when the job is said to be worked that way, not on the word: see statesRemote.
   if (REMOTE_IN_HEAD.test(`${title || ''} ${location || ''}`) || statesRemote(title, description)) {
-    if (hybrid) return 'hybrid';
+    if (hybrid && !remoteLocationOutranksHybrid(title, location, body)) return 'hybrid';
     return 'remote';
   }
   if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || hybrid || OFFICE_DAYS.test(fields) || PART_WEEK_REMOTE.test(fields)) return 'hybrid';
