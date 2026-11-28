@@ -27,6 +27,7 @@
  */
 const { Pool } = require('pg');
 const { cutLocationSql, realCompanyNameSql } = require('../src/utils/aggregator-fields');
+const { feedRemoteTags } = require('../src/utils/feed-workplace');
 
 const DB = process.env.DB || 'postgres://codev@localhost:5432/jobs_local';
 {
@@ -298,6 +299,7 @@ async function main() {
 
   const STEP = 20000;
   let inserted = 0;
+  const remoteIds = [];
   for (let from = 1; from <= Number(todo.n); from += STEP) {
     const res = await q(`
       WITH batch AS (SELECT * FROM agg_todo WHERE rn >= $1 AND rn < $2),
@@ -318,16 +320,46 @@ async function main() {
                NOW(), NOW(), NOW()
           FROM j
         ON CONFLICT (external_id, company_id) DO NOTHING
-        RETURNING 1)
-      SELECT (SELECT count(*) FROM ins) AS inserted`, [from, from + STEP]);
+        RETURNING id, workplace_type)
+      SELECT (SELECT count(*) FROM ins) AS inserted,
+             (SELECT coalesce(array_agg(id), '{}') FROM ins WHERE workplace_type = 'remote') AS remote_ids`, [from, from + STEP]);
     inserted += Number(res.rows[0].inserted);
+    remoteIds.push(...res.rows[0].remote_ids);
     if (((from - 1) / STEP) % 5 === 0) process.stdout.write(`\r  jobs inserted: ${n(inserted)} / ${n(todo.n)}   `);
   }
   console.log(`\r  jobs inserted: ${n(inserted)}        `);
+  await checkFeedRemote(remoteIds);
+}
+
+/**
+ * The feed's "remote" on the rows just inserted, checked against each posting's own words
+ * (src/utils/feed-workplace.js): kept, with is_remote set to match, when the text says remote;
+ * cleared to an unknown work mode when it does not. The insert above copies the feed's word and
+ * leaves is_remote false, so before this a feed row could say remote in one field and not the other.
+ */
+async function checkFeedRemote(ids) {
+  let kept = 0, cleared = 0;
+  for (let i = 0; i < ids.length; i += 2000) {
+    const { rows } = await q('SELECT id, title, location, description FROM jobs WHERE id = ANY($1::bigint[])', [ids.slice(i, i + 2000)]);
+    const keep = [], ww = [], clear = [];
+    for (const row of rows) {
+      const t = feedRemoteTags(row);
+      if (t.is_remote) { keep.push(row.id); ww.push(t.remote_worldwide); } else clear.push(row.id);
+    }
+    if (keep.length) {
+      await q(`UPDATE jobs j SET is_remote = true, remote_worldwide = v.ww
+                 FROM unnest($1::bigint[], $2::boolean[]) AS v(id, ww) WHERE j.id = v.id`, [keep, ww]);
+    }
+    if (clear.length) {
+      await q("UPDATE jobs SET workplace_type = NULL WHERE id = ANY($1::bigint[]) AND workplace_type = 'remote'", [clear]);
+    }
+    kept += keep.length; cleared += clear.length;
+  }
+  if (ids.length) console.log(`  feed "remote" checked: ${n(kept)} kept (text says remote), ${n(cleared)} cleared to unknown`);
 }
 
 if (require.main === module) {
   main().then(() => pool.end()).catch(async (e) => { console.error('FATAL', e.message); await pool.end(); process.exit(1); });
 }
 
-module.exports = { FIELDS };
+module.exports = { FIELDS, checkFeedRemote };
