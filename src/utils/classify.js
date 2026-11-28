@@ -21,15 +21,16 @@ const REMOTE_POSITIVE = [
   /\b100%\s*remote\b(?!\s+(?:positions|roles|jobs|employees|workers))/i,
   // Not on a condition or on named days: "work from home whenever it suits" (Emirates NBD), "if the
   // work activity allows", "work remotely on Fridays" are perks of office jobs (extract.js
-  // CONDITIONAL_HOME_WORK, PART_WEEK_REMOTE; supply loop 2026-11-21 18h).
-  /\bwork\s*from\s*home\b(?!\s+(?:stipend|reimbursement|allowance|equipment|budget|days?)\b)(?!\s*,?\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\s+to|as\s+long\s+as|provided)\b)(?!\s+(?:on\s+)?(?:the\s+)?(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:days?)?\b)/i,
+  // CONDITIONAL_HOME_WORK, PART_WEEK_REMOTE; supply loop 2026-11-21 18h). A condition on where the
+  // employee lives is no such perk: "work remotely as long as you live in one of these states".
+  /\bwork\s*from\s*home\b(?!\s+(?:stipend|reimbursement|allowance|equipment|budget|days?)\b)(?!\s*,?\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\s+to|as\s+long\s+as|provided)\b(?![^.;!?]{0,60}?\b(?:live|lives|living|reside|resides|residing|residents?|located|based(?!\s+on\b)|time\s*-?\s*zones?)\b))(?!\s+(?:on\s+)?(?:the\s+)?(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:days?)?\b)/i,
   /\bremote[\s-]*first\b/i,
   /\bremote\s*position\b/i,
   /\bremote\s*role\b/i,
   /\bremote\s*job\b(?!\s+sites?\b)/i,
   /\bremote\s*opportunity\b/i,
   /\blocation:\s*remote\b/i,
-  /\bwork\s*remotely\b(?!\s+(?:\d|up\s+to|one|two|three|four|once|twice|on\s+occasion|occasionally|as\s+needed|part[\s-]|some|\w+\s+days?\b))(?!\s*,?\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\s+to|as\s+long\s+as|provided)\b)(?!\s+(?:on\s+)?(?:the\s+)?(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:days?)?\b)/i,
+  /\bwork\s*remotely\b(?!\s+(?:\d|up\s+to|one|two|three|four|once|twice|on\s+occasion|occasionally|as\s+needed|part[\s-]|some|\w+\s+days?\b))(?!\s*,?\s*(?:if|when(?:ever)?|where(?:ver)?|depending|subject\s+to|as\s+long\s+as|provided)\b(?![^.;!?]{0,60}?\b(?:live|lives|living|reside|resides|residing|residents?|located|based(?!\s+on\b)|time\s*-?\s*zones?)\b))(?!\s+(?:on\s+)?(?:the\s+)?(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(?:days?)?\b)/i,
   // "Anywhere" only where it describes WHERE THE WORK IS DONE. Bare /\banywhere\b/ marked
   // onsite jobs remote from slogans and markup: DSV's "Start here. Go anywhere", CMA CGM's inline
   // CSS "overflow-wrap: anywhere", a retail "accessories you won't find anywhere else". Remote-only
