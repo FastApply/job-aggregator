@@ -115,6 +115,16 @@ function extractSalary(rawText) {
   }
 
   // The first match that is pay, passing over money that is something else (isOtherMoney).
+  // A bare "$" followed by the dollar it is: "a monthly pay of $670.00 AUD" (Elite Personal
+  // Assistance, Zoho) was stored USD (supply loop 2026-11-23 12h). Symbol patterns only.
+  const DOLLAR_CODE = /^\s*([kK])?\s*(AUD|CAD|NZD|SGD|HKD|MXN|USD)\b/;
+  function dollarCurrency(symbol, m) {
+    if (symbol !== '$') return null;
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 12);
+    const code = after.match(DOLLAR_CODE) || m[0].match(/\b(AUD|CAD|NZD|SGD|HKD|MXN)\b/);
+    return code ? code[2] || code[1] : null;
+  }
+
   function firstPay(re) {
     for (const m of text.matchAll(new RegExp(re.source, `${re.flags}g`))) {
       if (!isOtherMoney(text, m)) return m;
@@ -140,7 +150,7 @@ function extractSalary(rawText) {
     /([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?\s*(?:USD|CAD|AUD|GBP|EUR)?\s*(?:[-–—]|to)\s*(?:[$£€]|[AC]\$)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/
   );
   if (symbolRangeMatch) {
-    const currency = currencyMap[symbolRangeMatch[1]] || 'USD';
+    const currency = dollarCurrency(symbolRangeMatch[1], symbolRangeMatch) || currencyMap[symbolRangeMatch[1]] || 'USD';
     let min = parseNum(symbolRangeMatch[2]);
     let max = parseNum(symbolRangeMatch[4]);
     if (symbolRangeMatch[3]) min *= 1000;
@@ -172,7 +182,7 @@ function extractSalary(rawText) {
     /(?:salary|compensation|pay|base|total\s*comp|starting\s*at|up\s*to|earning)\s*(?:range\s*)?(?:of\s*|is\s*|:\s*|=\s*)?([$£€]|[AC]\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*([kK])?/i
   );
   if (singleMatch) {
-    const currency = currencyMap[singleMatch[1]] || 'USD';
+    const currency = dollarCurrency(singleMatch[1], singleMatch) || currencyMap[singleMatch[1]] || 'USD';
     let val = parseNum(singleMatch[2]);
     if (singleMatch[3]) val *= 1000;
     const interval = detectInterval(text, singleMatch.index, singleMatch.index + singleMatch[0].length);
@@ -420,9 +430,19 @@ function extractWorkplaceType(title, location, description) {
   // job, and "ob voll remote oder in einem unserer Büros" offers a choice.
   if (FULL_REMOTE_INTL.test(fields) && !hybrid) return 'remote';
   // Remote only when the job is said to be worked that way, not on the word: see statesRemote.
-  if (REMOTE_IN_HEAD.test(`${title || ''} ${location || ''}`) || statesRemote(title, description)) {
+  // Not against the posting's own on-site statement (onsiteStated): a description's remote words
+  // there are the company's ("we are a remote-first company") or the work's ("support colleagues
+  // working remotely"), and a title that says on-site outranks a location field named "Remote".
+  const head = `${title || ''} ${location || ''}`;
+  const onsite = onsiteStated(title, location, body);
+  if ((REMOTE_IN_HEAD.test(head) && !onsite.head) || (!REMOTE_IN_HEAD.test(head) && !onsite.any && statesRemote(title, description))) {
     if (hybrid && !remoteLocationOutranksHybrid(title, location, body)) return 'hybrid';
     return 'remote';
+  }
+  // "This is an on-site position 4 days/week", "an in-person role ... with flexibility for some
+  // remote work": on site with home days, so hybrid.
+  if (onsite.any && !hybrid && !OFFICE_DAYS.test(fields) && !PART_WEEK_REMOTE.test(fields)) {
+    return ONSITE_THEN_HOME.test(String(body || '').replace(/\s+/g, ' ')) ? 'hybrid' : 'onsite';
   }
   if (/\bflex\s*office\b|\bpartially remote\b/.test(fields) || hybrid || OFFICE_DAYS.test(fields) || PART_WEEK_REMOTE.test(fields)) return 'hybrid';
   if (HOME_WORK_INTL.test(fields)) return 'hybrid';
@@ -452,7 +472,55 @@ const NOT_REMOTE_EN = /\bnot\s+(?:an?\s+)?(?:\w+\s+)?remote\b|\bnot\s+suitable\s
 // "Remote Work: No", "Remote Eligible? No" are the same field.
 const REMOTE_FIELD_NO = /\bremote(?:\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity))?\s*\??\s*:\s*no\b|\bremote\s+(?:position|role|job|work(?:ing)?|eligible|eligibility|option|status|opportunity)\s*\??\s*[-–—]\s*no\b/i;
 // Remote as part of a thing, not a work model: "Senior Program Manager - Remote Sensing".
-const REMOTE_IN_HEAD = /\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|operations?\s+cent(?:er|re)))|\btelecommute\b|\bwork from home\b/i;
+// Nor its negation: "MSP Tier 2 IT Support Technician -Not Remote" (CareerPlug), "Human Resources
+// Generalist - Sausalito, CA (Not Remote)" (Breezy) were stored remote on the word (supply loop
+// 2026-11-23 12h).
+const REMOTE_IN_HEAD = /(?<!\bnot\s+|\bnon[\s-]?)\bremote\b(?!\s+(?:sensing|monitoring|access|patient|pilot|resolution|operations?\s+cent(?:er|re)))|\btelecommute\b|\bwork from home\b/i;
+
+/**
+ * The posting says THIS job is worked on site, in its title or in so many words. Supply loop
+ * 2026-11-23 12h: office jobs stored remote sat in remote-only searches, where the verdict refused
+ * them, and out of on-site searches for their own city. 77 of 3,605 remote rows served to 26
+ * remote-only automations said on-site; among them Digital Eclipse "Location: On-Site - Emeryville,
+ * CA" (its text: "colleagues working remotely across the United States"), NFI Vermont "This is an
+ * onsite position" ("work remotely with colleagues"), Truepill's "This is an onsite role in El Paso,
+ * TX" under "We are a remote-first company", Optum's "Senior Manager ... - MN On site", Kimley-Horn,
+ * an Indeed-style "Work Remotely • No" field, and titles "(Onsite - Night Shift)", "(Onsite: Deer
+ * Park, IL)", "Onsite Desktop Support Engineer - Plymouth" (location "Remote, ENG, GB").
+ * Not an offer of both ("Remote/Onsite IT Support Specialist", "Both Onsite & Remotely", "Remote
+ * (Eastern Time Zone preferred), or office-based in Hopewell, NJ"), nor a policy for other roles
+ * ("some pharmacy operations roles require onsite clinic presence", "For office-based employees").
+ * Returns { head, any }: head when the title or location says it.
+ */
+const ONSITE_WORD = '(?:on[\\s-]?site|in[\\s-]person|in[\\s-]office|office[\\s-]based)';
+const ONSITE_IN_TITLE = new RegExp(
+  `(?:^|[(\\[|,:–—-]\\s*)${ONSITE_WORD}(?=\\s*(?:$|[)\\]|,:–—-]|\\s(?:desktop|support|technician|engineer|role|position|only)\\b))|\\b${ONSITE_WORD}\\s*(?:$|[)\\]])|\\bnot\\s+remote\\b|\\bnon[\\s-]?remote\\b`, 'i');
+const ONSITE_STATEMENT = new RegExp([
+  `\\bthis\\s+(?:is|will\\s+be)\\s+an?\\s+(?:fully\\s+|100\\s?%\\s+)?${ONSITE_WORD}\\s+(?:position|role|job|opportunity)\\b`,
+  `\\b(?:this|the)\\s+(?:position|role|job)\\s+is\\s+(?:an?\\s+)?(?:fully\\s+|100\\s?%\\s+)?${ONSITE_WORD}\\b(?!\\s*(?:,\\s*)?(?:or|and|\\/)\\s)`,
+  `\\blocation\\s*:\\s*${ONSITE_WORD}\\b(?!\\s*(?:or|\\/|,)\\s*(?:fully\\s+)?remote)`,
+  '\\bwork\\s+remotely\\s*[•·:\\-–—]\\s*no\\b',
+].join('|'), 'i');
+// "Job Location: Onsite at Juno Beach, FL is preferred, Remote candidates will be considered".
+const BOTH_MODES = /\bremote\s+(?:candidates|applicants)\s+(?:will\s+(?:also\s+)?be\s+|are\s+(?:also\s+)?)?(?:considered|welcome)\b|\bremote\s*(?:\/|&|\$|and|or)\s*on[\s-]?site\b|\bon[\s-]?site\s*(?:\/|&|\$|and|or)\s*remote(?:ly)?\b|\bremote\b[^.;]{0,60}\bor\s+(?:office[\s-]based|on[\s-]?site|in[\s-]person)\b/i;
+
+// Not "fully office based, with no work from home option".
+const ONSITE_THEN_HOME = new RegExp(`${ONSITE_WORD}\\b[^.;!?]{0,80}?(?<!\\bno\\s+(?:work\\s+)?|\\bnot\\s+(?:work\\s+)?)(?:\\bremote(?:ly)?\\b|\\b(?:work\\s+)?from\\s+home\\b|\\bwfh\\b|\\b[1-4]\\s*days?\\s*(?:\\/|a|per|each)\\s*week\\b)`, 'i');
+
+// The posting also says THIS job is remote: the employer contradicts itself (Lumen's "This is an
+// onsite position at Lumen's Zuni St lab" over "#LI-Remote", Danaher's "(Onsite: Deer Park, IL)"
+// over "This position is a remote role") or offers remote on a condition ("This is a Remote
+// position Only if you currently reside in the state of Texas... Otherwise, this is an Onsite
+// position"). The stored reading stays (owner, 2026-11-05: an employer's own contradiction is left).
+const JOB_REMOTE = /\b(?:this|the)\s+(?:is|will\s+be)\s+an?\s+(?:fully\s+|100\s?%\s+)?remote\s+(?:position|role|job|opportunity)\b|\b(?:this|the)\s+(?:position|role|job)\s+is\s+(?:an?\s+)?(?:fully\s+|100\s?%\s+)?remote\b|#li-remote\b/i;
+
+function onsiteStated(title, location, body) {
+  const t = String(title || '');
+  const text = String(body || '').replace(/\s+/g, ' ');
+  if (BOTH_MODES.test(`${t} ${location || ''}`) || JOB_REMOTE.test(text)) return { head: false, any: false };
+  const head = ONSITE_IN_TITLE.test(t) || /\bnot\s+remote\b|\bnon[\s-]?remote\b/i.test(String(location || ''));
+  return { head, any: head || (ONSITE_STATEMENT.test(text) && !BOTH_MODES.test(text)) };
+}
 
 /**
  * extractWorkplaceType for a description fetched after the crawl, which is written onto a job the
@@ -531,4 +599,4 @@ function normalizeEmploymentType(raw) {
   return null; // unrecognised free text is dropped rather than shown as a filter option
 }
 
-module.exports = { PART_WEEK_REMOTE, CONDITIONAL_HOME_WORK, REMOTE_FIELD_NO, isOtherMoney, extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES };
+module.exports = { PART_WEEK_REMOTE, CONDITIONAL_HOME_WORK, REMOTE_FIELD_NO, onsiteStated, isOtherMoney, extractSalary, extractWorkplaceType, extractWorkplaceTypeFromDescription, statesRemote, extractEmploymentType, normalizeEmploymentType, EMPLOYMENT_TYPES };
